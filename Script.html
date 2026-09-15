@@ -1,0 +1,1078 @@
+<script>
+/* ---------------------------------------------------------------------------
+   Every screen renders from one server payload. A mutation returns the whole
+   new state, so the UI never has to reason about what a write changed.
+   --------------------------------------------------------------------------- */
+
+var S = null;                 // last state from the server
+var TAB = 'plan';
+var MONTH = null;
+var COLLAPSED = {};
+var SHOW_HIDDEN = false;
+var FILTER_ACCOUNT = '';
+var SHOW_SEARCH = false;
+var SEARCH = '';
+var SCHED_OPEN = false;
+var HOME_CLOSED = { summary: true };
+var REFLECT = null;
+var BUSY = false;
+
+// --- server -----------------------------------------------------------------
+
+function api(name, payload) {
+  return new Promise(function (resolve, reject) {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (err) { reject(err); })
+      [name](payload);
+  });
+}
+
+function call(name, payload, okMessage) {
+  if (BUSY) return Promise.resolve();
+  BUSY = true;
+  return api(name, payload).then(function (state) {
+    BUSY = false;
+    if (state && state.month) { S = state; MONTH = state.month; }
+    closeModal();
+    render();
+    if (okMessage) toast(okMessage);
+    return state;
+  }).catch(function (err) {
+    // The message is the whole response to a failed write; rethrowing here only
+    // produces unhandled rejections, since no caller acts on one.
+    BUSY = false;
+    toast(cleanError(err), true);
+    return null;
+  });
+}
+
+function cleanError(err) {
+  var m = (err && err.message) ? err.message : String(err);
+  return m.replace(/^Error:\s*/, '').replace(/^CONFIRM:/, '');
+}
+
+// --- formatting -------------------------------------------------------------
+
+var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+                   'July', 'August', 'September', 'October', 'November', 'December'];
+
+function currency() { return (S && S.config && S.config.currency) || '$'; }
+
+function money(n, opts) {
+  n = Number(n) || 0;
+  var o = opts || {};
+  var abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  var s = currency() + abs;
+  if (n < 0) s = '-' + s;
+  else if (o.plus && n > 0) s = '+' + s;
+  return s;
+}
+
+function monthLabel(m) {
+  return MONTH_NAMES[+m.slice(5, 7) - 1] + ' ' + m.slice(0, 4);
+}
+
+function shortMonth(m) { return MONTH_NAMES[+m.slice(5, 7) - 1].slice(0, 3); }
+
+function addMonths(m, n) {
+  var y = +m.slice(0, 4), mm = +m.slice(5, 7) - 1 + n;
+  y += Math.floor(mm / 12);
+  mm = ((mm % 12) + 12) % 12;
+  return y + '-' + ('0' + (mm + 1)).slice(-2);
+}
+
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function toast(msg, bad) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast on' + (bad ? ' bad' : '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { el.className = 'toast'; }, bad ? 4200 : 2200);
+}
+
+// --- lookups ----------------------------------------------------------------
+
+function accountById(id) {
+  for (var i = 0; i < S.accounts.length; i++) if (S.accounts[i].id === id) return S.accounts[i];
+  return null;
+}
+function categoryById(id) {
+  for (var i = 0; i < S.categories.length; i++) if (S.categories[i].id === id) return S.categories[i];
+  return null;
+}
+function accountName(id) { var a = accountById(id); return a ? a.name : 'Unknown account'; }
+function categoryName(id) {
+  if (id === 'RTA') return 'Ready to assign';
+  var c = categoryById(id);
+  return c ? c.name : 'Uncategorized';
+}
+
+/** Categories grouped for display, in sheet order, payment envelopes last. */
+function groupedCategories() {
+  var groups = [], index = {};
+  S.categories.slice().sort(function (a, b) { return a.sortOrder - b.sortOrder; })
+    .forEach(function (c) {
+      if (c.type === 'rta') return;
+      if (c.hidden && !SHOW_HIDDEN) return;
+      if (!index[c.groupName]) {
+        index[c.groupName] = { name: c.groupName, items: [], isCC: c.type === 'cc_payment' };
+        groups.push(index[c.groupName]);
+      }
+      index[c.groupName].items.push(c);
+    });
+  return groups.filter(function (g) { return !g.isCC; })
+               .concat(groups.filter(function (g) { return g.isCC; }));
+}
+
+function budgetableCategories() {
+  return S.categories.filter(function (c) { return c.type !== 'rta' && (!c.hidden || SHOW_HIDDEN); })
+                     .sort(function (a, b) { return a.sortOrder - b.sortOrder; });
+}
+
+// --- icons ------------------------------------------------------------------
+
+function svg(body, fill) {
+  return '<svg class="i' + (fill ? ' fill' : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + body + '</svg>';
+}
+
+var ICON = {
+  down:   svg('<path d="M6 9l6 6 6-6"/>'),
+  right:  svg('<path d="M9 6l6 6-6 6"/>'),
+  filter: svg('<circle cx="12" cy="12" r="9.5"/><path d="M7.5 9h9M9 12.5h6M10.8 16h2.4"/>'),
+  edit:   svg('<path d="M3 7h10M3 12h8M3 17h5"/><path d="M13.5 18.5l.6-3 6.4-6.4 2.4 2.4-6.4 6.4z"/>'),
+  dots:   svg('<circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>', true),
+  search: svg('<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/>'),
+  plusCircle: svg('<circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v9M7.5 12h9"/>'),
+  calendar: svg('<rect x="4" y="5.5" width="16" height="14.5" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>'),
+  swap:   svg('<path d="M20 8H5l3.5-3.5M4 16h15l-3.5 3.5"/>'),
+  cash:   svg('<rect x="2.5" y="7" width="19" height="10" rx="1.5"/><circle cx="12" cy="12" r="2.3"/><path d="M6 12h.01M18 12h.01"/>'),
+  card:   svg('<rect x="2.5" y="5.5" width="19" height="13" rx="2"/><path d="M2.5 10h19M6.5 15h4"/>'),
+  chart:  svg('<path d="M4 20V11M10 20V5M16 20v-6M21 20H3"/>'),
+  pie:    svg('<path d="M11 3.5a8.5 8.5 0 1 0 9.5 9.5H11z"/><path d="M13.5 1.5v9h9a9 9 0 0 0-9-9z"/>', true),
+  bars:   svg('<path d="M4 10h4v8H4zm6-7h4v15h-4zm6 4h4v11h-4zM3 19.5h18V22H3z"/>', true),
+  bank:   svg('<path d="M12 2 2.5 7v2h19V7zM4.5 10.5h2.5v7H4.5zm4.5 0h2.5v7H9zm4.5 0H16v7h-2.5zm4.5 0h2v7h-2zM2.5 19h19v2.5h-19z"/>', true)
+};
+
+function iconBtn(icon, label, onclick, pressed) {
+  return '<button class="icon-btn' + (pressed ? ' on' : '') + '" aria-label="' + esc(label) + '"' +
+         (pressed !== undefined ? ' aria-pressed="' + !!pressed + '"' : '') +
+         ' onclick="' + onclick + '">' + icon + '</button>';
+}
+
+// --- shell ------------------------------------------------------------------
+
+function render() {
+  if (!S) return;
+  document.body.classList.toggle('tab-home', TAB === 'home');
+  renderTopbar();
+  renderRtaBanner();
+  ['home', 'plan', 'spending', 'accounts', 'reflect'].forEach(function (t) {
+    document.getElementById('panel-' + t).classList.toggle('on', t === TAB);
+    document.getElementById('tab-' + t).setAttribute('aria-selected', String(t === TAB));
+  });
+  document.getElementById('fab').hidden = !(TAB === 'home' || TAB === 'plan' || TAB === 'spending');
+
+  if (TAB === 'home') renderHome();
+  if (TAB === 'plan') renderPlan();
+  if (TAB === 'spending') renderSpending();
+  if (TAB === 'accounts') renderAccounts();
+  if (TAB === 'reflect') renderReflect();
+}
+
+function renderTopbar() {
+  var el = document.getElementById('topbar');
+  var title = '', actions = '';
+  if (TAB === 'home') {
+    title = '<h1>My Budget</h1>';
+  } else if (TAB === 'plan') {
+    title = '<button class="month-btn" onclick="openMonthPicker()" aria-label="Choose month">' +
+            '<h1>' + shortMonth(MONTH) + ' ' + MONTH.slice(0, 4) + '</h1>' +
+            '<span class="month-caret">' + ICON.down + '</span></button>';
+    actions = iconBtn(ICON.filter, 'Show dormant categories', 'toggleHidden()', SHOW_HIDDEN) +
+              iconBtn(ICON.edit, 'Add category', 'openNewCategory()') +
+              iconBtn(ICON.dots, 'More', 'openPlanMenu()');
+  } else if (TAB === 'spending') {
+    title = '<h1>Spending</h1>';
+    actions = iconBtn(ICON.search, 'Search', 'toggleSearch()', SHOW_SEARCH) +
+              iconBtn(ICON.dots, 'Choose month', 'openMonthPicker()');
+  } else if (TAB === 'accounts') {
+    title = '<h1>Accounts</h1>';
+    actions = iconBtn(ICON.plusCircle, 'Add account', 'openNewAccount()');
+  } else {
+    title = '<h1>Reflect</h1>';
+    actions = iconBtn(ICON.dots, 'Choose month', 'openMonthPicker()');
+  }
+  el.className = 'topbar' + (TAB === 'home' ? ' home' : '');
+  el.innerHTML = '<div class="topbar-title">' + title + '</div>' +
+                 '<div class="topbar-actions">' + actions + '</div>';
+}
+
+/** Ready to Assign only earns space on screen when there is something to act on. */
+function renderRtaBanner() {
+  var el = document.getElementById('rtaBanner');
+  var rta = S.readyToAssign;
+  el.hidden = Math.abs(rta) < 0.005 || (TAB !== 'plan' && TAB !== 'home');
+  if (el.hidden) return;
+  el.className = 'rta-banner' + (rta < 0 ? ' over' : '');
+  el.innerHTML = '<span class="amount num">' + money(rta) + '</span>' +
+    '<span class="caption">' + (rta < 0 ? 'Assigned more than you have' : 'Ready to Assign') + '</span>';
+}
+
+function setTab(t) { TAB = t; window.scrollTo(0, 0); render(); }
+
+function setMonth(m) {
+  MONTH = m;
+  REFLECT = null;
+  if (S) renderTopbar();
+  load();
+}
+
+function openMonthPicker() {
+  var now = S.today.slice(0, 7), html = '<div class="month-grid">';
+  for (var i = -12; i <= 12; i++) {
+    var m = addMonths(MONTH, i);
+    html += '<button class="month-opt' + (m === MONTH ? ' on' : '') + (m === now ? ' now' : '') +
+            '" onclick="closeModal();setMonth(\'' + m + '\')">' + shortMonth(m) + ' ' + m.slice(0, 4) + '</button>';
+  }
+  html += '</div>';
+  if (MONTH !== now) html += '<button class="btn" onclick="closeModal();setMonth(\'' + now + '\')">Go to this month</button>';
+  openModal('Choose month', html);
+  var on = document.querySelector('.month-opt.on');
+  if (on) on.scrollIntoView({ block: 'center' });
+}
+
+function emptyState(title, body, cta, onclick) {
+  return '<div class="empty"><h3>' + esc(title) + '</h3><p>' + esc(body) + '</p>' +
+         (cta ? '<button class="btn" onclick="' + onclick + '">' + esc(cta) + '</button>' : '') +
+         '</div>';
+}
+
+function kv(key, value, tone) {
+  return '<div class="kv"><span>' + esc(key) + '</span><span class="num ' + (tone || '') + '">' + value + '</span></div>';
+}
+
+function pillTone(c) {
+  var spent = c.activity < 0 ? -c.activity : 0;
+  return c.available < -0.004 ? 'neg' : (c.available < 0.005 ? (spent > 0 ? 'warn' : '') : 'pos');
+}
+
+// --- Home -------------------------------------------------------------------
+
+function pinnedIds() {
+  try {
+    var v = JSON.parse((S.config && S.config.pinnedCategories) || '[]');
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function homeCard(key, title, extra, body) {
+  var open = !HOME_CLOSED[key];
+  return '<section class="card">' +
+    '<div class="card-head" onclick="toggleCard(\'' + key + '\')">' +
+      '<span class="caret">' + (open ? ICON.down : ICON.right) + '</span>' +
+      '<h2>' + esc(title) + '</h2>' + (extra || '') +
+    '</div>' +
+    (open ? '<div class="card-body">' + body + '</div>' : '') +
+    '</section>';
+}
+
+function toggleCard(key) { HOME_CLOSED[key] = !HOME_CLOSED[key]; renderHome(); }
+
+function renderHome() {
+  var el = document.getElementById('panel-home');
+  var pinned = pinnedIds().map(categoryById).filter(function (c) { return c && c.type !== 'rta'; });
+
+  var pinBody = pinned.length
+    ? pinned.map(function (c) {
+        return '<button class="card-row" onclick="openMoveMoney(\'' + c.id + '\')">' +
+          '<span class="name">' + esc(c.name) + '</span>' +
+          '<span class="pill num ' + pillTone(c) + '">' + money(c.available) + '</span></button>';
+      }).join('')
+    : '<div class="card-empty"><p>Pin the envelopes you check most often to see them here.</p>' +
+      '<button class="btn small" onclick="openPinEditor()">Choose envelopes</button></div>';
+
+  var spent = 0;
+  S.categories.forEach(function (c) { if (c.type === 'normal' && c.activity < 0) spent -= c.activity; });
+
+  var summary =
+    kv('Income', money(S.monthIncome), S.monthIncome > 0.004 ? 'pos' : '') +
+    kv('Assigned', money(S.monthAssigned)) +
+    kv('Spent', money(spent)) +
+    kv('Ready to Assign', money(S.readyToAssign), S.readyToAssign < -0.004 ? 'neg' : '');
+
+  el.innerHTML = '<div class="cards">' +
+    homeCard('pinned', 'Pinned',
+      '<button class="card-action" onclick="event.stopPropagation();openPinEditor()">Edit</button>', pinBody) +
+    homeCard('summary', MONTH_NAMES[+MONTH.slice(5, 7) - 1] + ' Summary', '', summary) +
+    '</div>';
+}
+
+function openPinEditor() {
+  var chosen = {};
+  pinnedIds().forEach(function (id) { chosen[id] = true; });
+  var html = '<div class="pick-list">';
+  groupedCategories().forEach(function (g) {
+    html += '<div class="pick-group">' + esc(g.name) + '</div>';
+    g.items.forEach(function (c) {
+      html += '<label class="pick"><input type="checkbox" value="' + c.id + '"' + (chosen[c.id] ? ' checked' : '') + '>' +
+        '<span class="name">' + esc(c.name) + '</span>' +
+        '<span class="sub num">' + money(c.available) + '</span></label>';
+    });
+  });
+  html += '</div><button class="btn" onclick="submitPins()">Save</button>';
+  openModal('Pinned envelopes', html);
+}
+
+function submitPins() {
+  var picked = [];
+  document.querySelectorAll('.pick input').forEach(function (b) { if (b.checked) picked.push(b.value); });
+  // Envelopes that stay pinned keep their place; new ones join at the end in list order.
+  var ids = pinnedIds().filter(function (id) { return picked.indexOf(id) >= 0; });
+  picked.forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); });
+  call('setPinnedCategories', { month: MONTH, ids: ids }, 'Pinned updated');
+}
+
+// --- Plan -------------------------------------------------------------------
+
+function renderPlan() {
+  var el = document.getElementById('panel-plan');
+  var groups = groupedCategories();
+
+  if (!groups.length) {
+    el.innerHTML = emptyState('No categories yet',
+      'Categories are the envelopes your money gets divided into — rent, groceries, ' +
+      'anything you want to fund on purpose.', 'Add your first category', 'openNewCategory()');
+    return;
+  }
+
+  var html = SHOW_HIDDEN
+    ? '<div class="notice"><span>Showing dormant categories</span><button onclick="toggleHidden()">Hide</button></div>'
+    : '';
+
+  groups.forEach(function (g) {
+    var available = 0, assigned = 0;
+    g.items.forEach(function (c) { available += c.available; assigned += c.assigned; });
+    var open = !COLLAPSED[g.name];
+    html += '<div class="group-head plan-grid" onclick="toggleGroup(' + JSON.stringify(g.name).replace(/"/g, '&quot;') + ')">' +
+      '<span class="title"><span class="caret">' + (open ? ICON.down : ICON.right) + '</span>' +
+      '<h2>' + esc(g.name) + '</h2></span>' +
+      '<span class="col"><small>Assigned</small><b class="num">' + money(assigned) + '</b></span>' +
+      '<span class="col"><small>Available</small><b class="num">' + money(available) + '</b></span></div>';
+    if (!open) return;
+
+    g.items.forEach(function (c) {
+      var spent = c.activity < 0 ? -c.activity : 0;
+      var pool = c.available + spent;
+      var pct = pool > 0 ? Math.min(100, Math.round(spent / pool * 100)) : (spent > 0 ? 100 : 0);
+      html += '<div class="row plan-grid">' +
+        '<div class="label" onclick="openMoveMoney(\'' + c.id + '\')">' +
+          '<span class="name">' + esc(c.name) + (c.hidden ? ' &middot; dormant' : '') + '</span>' +
+          (spent > 0
+            ? '<div class="spent-bar"><i class="' + (c.available < -0.004 ? 'over' : '') +
+              '" style="width:' + pct + '%"></i></div>'
+            : '') +
+        '</div>' +
+        '<input class="assign-input num" inputmode="decimal" value="' +
+          (c.assigned ? money(c.assigned) : '') + '" placeholder="' + money(0) + '" ' +
+          'aria-label="Assigned to ' + esc(c.name) + '" ' +
+          'onfocus="this.select()" onchange="commitAssign(this, \'' + c.id + '\')">' +
+        '<span class="pill num ' + pillTone(c) + '" onclick="openMoveMoney(\'' + c.id + '\')">' +
+          money(c.available) + '</span>' +
+        '</div>';
+    });
+  });
+
+  el.innerHTML = html;
+}
+
+function openPlanMenu() {
+  var incomePlan = S.recurring.filter(function (r) { return r.type === 'income' && r.splits.length; })[0];
+  openModal('Plan', '<div class="menu">' +
+    '<button class="menu-item" onclick="openMonthPicker()">Choose month</button>' +
+    '<button class="menu-item" onclick="openNewCategory()">Add category</button>' +
+    (incomePlan ? '<button class="menu-item" onclick="openIncomePlan(\'' + incomePlan.id + '\')">Assign from income plan</button>' : '') +
+    '<button class="menu-item" onclick="closeModal();toggleHidden()">' +
+      (SHOW_HIDDEN ? 'Hide dormant categories' : 'Show dormant categories') + '</button>' +
+    '</div>');
+}
+
+function toggleGroup(name) { COLLAPSED[name] = !COLLAPSED[name]; renderPlan(); }
+function toggleHidden() { SHOW_HIDDEN = !SHOW_HIDDEN; render(); }
+
+function commitAssign(input, categoryId) {
+  var v = parseFloat(String(input.value).replace(/[^0-9.\-]/g, ''));
+  if (isNaN(v)) v = 0;
+  var current = categoryById(categoryId);
+  if (current && Math.abs(current.assigned - v) < 0.005) { input.blur(); return; }
+  call('setAssigned', { month: MONTH, categoryId: categoryId, amount: v });
+}
+
+// --- Spending ---------------------------------------------------------------
+
+function renderSpending() {
+  var el = document.getElementById('panel-spending');
+  var html = '';
+  if (SHOW_SEARCH) {
+    html += '<div class="search-bar">' +
+      '<input id="searchInput" type="search" placeholder="Search memo, category, account" value="' + esc(SEARCH) +
+        '" oninput="SEARCH=this.value;renderSpendingList()">' +
+      '<select aria-label="Account" onchange="filterAccount(this.value)">' +
+        '<option value="">All accounts</option>' + accountOptions(FILTER_ACCOUNT) + '</select>' +
+      '</div>';
+  }
+  el.innerHTML = html + '<div id="spendList"></div>';
+  renderSpendingList();
+}
+
+function txnSearchText(t) {
+  return [t.memo, accountName(t.accountId), t.toAccountId ? accountName(t.toAccountId) : '']
+    .concat(t.splits.map(function (s) { return categoryName(s.categoryId); }))
+    .join(' ').toLowerCase();
+}
+
+function renderSpendingList() {
+  var el = document.getElementById('spendList');
+  var q = SEARCH.trim().toLowerCase();
+  var txns = S.transactions.filter(function (t) {
+    return (!FILTER_ACCOUNT || t.accountId === FILTER_ACCOUNT || t.toAccountId === FILTER_ACCOUNT) &&
+           (!q || txnSearchText(t).indexOf(q) >= 0);
+  });
+
+  if (!S.transactions.length) {
+    el.innerHTML = emptyState('No transactions in ' + monthLabel(MONTH),
+      'Tap the Transaction button to record what you spent, what came in, or money you ' +
+      'moved between accounts.', 'Add a transaction', 'openTxn()');
+    return;
+  }
+
+  var scheduled = txns.filter(function (t) { return !t.cleared && t.date > S.today; });
+  var posted = txns.filter(function (t) { return scheduled.indexOf(t) < 0; });
+
+  var html = '<button class="sched-head" onclick="SCHED_OPEN=!SCHED_OPEN;renderSpendingList()">' +
+    '<span class="caret">' + (SCHED_OPEN ? ICON.down : ICON.right) + '</span>Scheduled' +
+    (scheduled.length ? ' <span class="count">' + scheduled.length + '</span>' : '') +
+    '<span class="cal">' + ICON.calendar + '</span></button>';
+  if (SCHED_OPEN) {
+    html += scheduled.length
+      ? scheduled.slice().reverse().map(txnRow).join('')
+      : '<div class="sched-empty">Nothing scheduled for the rest of ' + monthLabel(MONTH) + '.</div>';
+  }
+
+  if (!posted.length) {
+    html += '<div class="empty"><p>No transactions match.</p></div>';
+  }
+  var lastDate = null;
+  posted.forEach(function (t) {
+    if (t.date !== lastDate) {
+      html += '<div class="date-head">' + t.date.slice(5, 7) + '/' + t.date.slice(8, 10) + '/' + t.date.slice(0, 4) + '</div>';
+      lastDate = t.date;
+    }
+    html += txnRow(t);
+  });
+
+  el.innerHTML = html;
+}
+
+function txnRow(t) {
+  var isIn = t.amount > 0.004 && t.type !== 'transfer';
+  var who, tag, acct = '';
+  if (t.type === 'transfer') {
+    var to = accountById(t.toAccountId);
+    who = '<span class="who transfer">Transfer to <b>' + esc(accountName(t.toAccountId)) + '</b><br>' +
+          'From <b>' + esc(accountName(t.accountId)) + '</b>' +
+          (t.memo ? '<span class="memo">' + esc(t.memo) + '</span>' : '') + '</span>';
+    tag = '<span class="tag transfer">' + ICON.swap + ((to && to.type === 'credit') ? 'Card payment' : 'Transfer') + '</span>';
+  } else {
+    who = '<span class="who">' + esc(t.memo || 'Payee Needed') + '</span>';
+    tag = '<span class="tag">' + esc(t.splits.length > 1
+      ? 'Split (' + t.splits.length + ')'
+      : categoryName(t.splits.length ? t.splits[0].categoryId : '')) + '</span>';
+    acct = accountName(t.accountId);
+  }
+  return '<button class="txn" onclick="openTxnDetail(\'' + t.txnId + '\')">' +
+    '<div class="txn-main">' + who +
+      '<span class="amt num' + (isIn ? ' in' : '') + '">' +
+        money(t.type === 'transfer' ? -Math.abs(t.amount) : t.amount, { plus: isIn }) +
+        '<span class="cleared' + (t.cleared ? ' on' : '') + '" title="' + (t.cleared ? 'Cleared' : 'Uncleared') + '">C</span>' +
+      '</span></div>' +
+    '<div class="txn-sub">' + tag + '<span class="acct-name">' + esc(acct) + '</span></div>' +
+    '</button>';
+}
+
+function toggleSearch() {
+  SHOW_SEARCH = !SHOW_SEARCH;
+  if (!SHOW_SEARCH) { SEARCH = ''; FILTER_ACCOUNT = ''; }
+  renderTopbar();
+  renderSpending();
+  var input = document.getElementById('searchInput');
+  if (input) input.focus();
+}
+
+function filterAccount(id) { FILTER_ACCOUNT = id; renderSpendingList(); }
+
+// --- Accounts ---------------------------------------------------------------
+
+function renderAccounts() {
+  var el = document.getElementById('panel-accounts');
+
+  if (!S.accounts.length) {
+    el.innerHTML = emptyState('No accounts yet',
+      'Add the places your money actually sits: cash, a checking account, a credit ' +
+      'card. Balances come from the transactions you record.',
+      'Add your first account', 'openNewAccount()');
+    return;
+  }
+
+  var html = '';
+  [['debit', 'Cash', ICON.cash], ['credit', 'Credit', ICON.card], ['tracking', 'Tracking', ICON.chart]]
+    .forEach(function (kind) {
+      var list = S.accounts.filter(function (a) { return a.type === kind[0]; });
+      if (!list.length) return;
+      var total = list.reduce(function (sum, a) { return sum + (a.archived ? 0 : a.balance); }, 0);
+      html += '<div class="section-head"><h2>' + kind[1] + '</h2>' +
+              '<span class="num">' + money(total) + '</span></div><div class="card">';
+      list.forEach(function (a) {
+        var pending = Math.abs(a.balance - a.cleared) > 0.005;
+        html += '<button class="acct' + (a.archived ? ' off' : '') + '" onclick="openAccount(\'' + a.id + '\')">' +
+          '<span class="acct-ico ' + a.type + '">' + kind[2] + '</span>' +
+          '<span class="label"><span class="name">' + esc(a.name) + (a.archived ? ' (archived)' : '') + '</span>' +
+          (pending ? '<span class="sub num">' + money(a.cleared) + ' cleared</span>' : '') +
+          (Math.abs(a.upcoming || 0) > 0.005 ? '<span class="sub num">' + money(a.upcoming, { plus: true }) +
+            ' scheduled</span>' : '') + '</span>' +
+          '<span class="bal num ' + (a.balance < -0.004 ? 'neg' : (a.balance > 0.004 ? 'pos' : '')) + '">' +
+          money(a.balance) + '</span></button>';
+      });
+      html += '</div>';
+    });
+
+  html += '<div class="section-head"><h2>Net worth</h2><span class="num">' + money(S.netWorth) + '</span></div>';
+  el.innerHTML = html;
+}
+
+// --- Reflect ----------------------------------------------------------------
+
+var BREAKDOWN_COLORS = ['#5558F0', '#8BC34A', '#D9AE3A', '#B83B3B', '#4447C8', '#7C83F5'];
+
+function renderReflect() {
+  var el = document.getElementById('panel-reflect');
+  if (!REFLECT || REFLECT.month !== MONTH) {
+    el.innerHTML = '<div class="loading">Adding it up&hellip;</div>';
+    api('getReflect', MONTH).then(function (r) {
+      REFLECT = r;
+      if (TAB === 'reflect') renderReflect();
+    }).catch(function (e) { el.innerHTML = '<div class="loading">' + esc(cleanError(e)) + '</div>'; });
+    return;
+  }
+
+  var r = REFLECT;
+  var spentCats = r.byCategory.filter(function (c) { return c.spent > 0.004; });
+  var parts = spentCats.slice(0, 5).map(function (c, i) {
+    return { name: c.name, amount: c.spent, color: BREAKDOWN_COLORS[i] };
+  });
+  var others = spentCats.slice(5).reduce(function (sum, c) { return sum + c.spent; }, 0);
+  if (others > 0.004) parts.push({ name: 'All Others', amount: others, color: BREAKDOWN_COLORS[5] });
+
+  var html = '<div class="cards"><section class="card report">' +
+    '<div class="report-head">' + ICON.pie + '<span>Spending Breakdown</span></div>' +
+    '<div class="report-month">' + monthLabel(r.month) + '</div>' +
+    '<div class="report-figure num">' + money(r.spent) + '</div>';
+  if (parts.length) {
+    html += '<div class="stack">' + parts.map(function (p) {
+        return '<i style="flex:' + p.amount + ';background:' + p.color + '"></i>';
+      }).join('') + '</div>' +
+      '<div class="report-cols"><span>Top Categories</span><span>Spent</span></div>' +
+      parts.map(function (p) {
+        return '<div class="legend-row"><i style="background:' + p.color + '"></i>' +
+          '<span class="name">' + esc(p.name) + '</span><span class="num">' + money(p.amount) + '</span></div>';
+      }).join('');
+  } else {
+    html += '<p class="faint">No spending recorded in ' + monthLabel(r.month) + '.</p>';
+  }
+  html += '</section>';
+
+  html += '<section class="card report">' +
+    '<div class="report-head">' + ICON.chart + '<span>This month</span></div>' +
+    '<div class="stats">' +
+      stat(money(r.spent), 'Spent in ' + shortMonth(r.month)) +
+      stat(r.pct + '%', 'Of the envelopes you used') +
+      stat(money(r.income), 'Income received', r.income > 0.004 ? 'pos' : '') +
+      stat(money(r.debt), 'Owed on cards', r.debt < -0.004 ? 'neg' : '') +
+    '</div></section>';
+
+  if (spentCats.length) {
+    html += '<section class="card report">' +
+      '<div class="report-head">' + ICON.calendar + '<span>Where it went</span>' +
+      '<span class="total num">' + money(r.spent) + '</span></div>';
+    spentCats.forEach(function (c) {
+      var tone = c.available < -0.004 ? 'neg' : (c.available < 0.005 ? 'warn' : 'pos');
+      html += '<div class="cat-row"><div class="label">' +
+        '<span class="name">' + esc(c.name) + '</span>' +
+        '<span class="sub num">' + money(c.spent) + ' of ' + money(c.pool) + ' &middot; ' + c.pct + '%</span>' +
+        '<div class="spent-bar"><i class="' + (c.available < -0.004 ? 'over' : '') +
+        '" style="width:' + Math.min(100, c.pct) + '%"></i></div></div>' +
+        '<span class="pill num ' + tone + '">' + money(c.available) + '</span></div>';
+    });
+    html += '</section>';
+  }
+
+  var active =r.trend.filter(function (t) { return t.spent > 0 || t.income > 0; });
+  var avgSpent = active.reduce(function (s, t) { return s + t.spent; }, 0) / (active.length || 1);
+  var avgIncome = active.reduce(function (s, t) { return s + t.income; }, 0) / (active.length || 1);
+  var verdict = !active.length ? 'Nothing recorded in the last six months.'
+              : avgSpent > avgIncome ? 'On average, you’re spending more than you make.'
+              : 'On average, you’re making more than you spend.';
+  var peak = Math.max.apply(null, r.trend.map(function (t) { return Math.max(t.spent, t.income); }).concat([1]));
+
+  html += '<section class="card report">' +
+    '<div class="report-head">' + ICON.bars + '<span>Income vs. Spending</span></div>' +
+    '<p class="verdict">' + esc(verdict) + '</p><div class="trend">';
+  r.trend.forEach(function (t) {
+    html += '<div class="col"><div class="bars">' +
+      '<i class="in" style="height:' + Math.max(2, t.income / peak * 100) + '%"></i>' +
+      '<i class="out" style="height:' + Math.max(2, t.spent / peak * 100) + '%"></i>' +
+      '</div><div class="m">' + shortMonth(t.month) + '</div></div>';
+  });
+  html += '</div><div class="legend">' +
+    '<span><i style="background:var(--pos)"></i>Income</span>' +
+    '<span><i style="background:var(--action)"></i>Spending</span></div>' +
+    kv('Average income', money(avgIncome)) +
+    kv('Average spending', money(avgSpent)) +
+    '</section>';
+
+  html += '<section class="card report">' +
+    '<div class="report-head">' + ICON.bank + '<span>Balances</span></div><div style="margin-top:14px">' +
+    kv('Cash and bank', money(r.assets), 'pos') +
+    kv('Net worth', '<b>' + money(r.netWorth) + '</b>') +
+    '</div></section></div>';
+
+  el.innerHTML = html;
+}
+
+function stat(value, key, tone) {
+  return '<div class="stat"><span class="v num ' + (tone || '') + '">' + value + '</span>' +
+         '<span class="k">' + esc(key) + '</span></div>';
+}
+
+// --- modal plumbing ---------------------------------------------------------
+
+function openModal(title, body) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = body;
+  document.getElementById('scrim').classList.add('on');
+  document.getElementById('modal').classList.add('on');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+  document.getElementById('scrim').classList.remove('on');
+  document.getElementById('modal').classList.remove('on');
+  document.body.style.overflow = '';
+}
+
+function field(label, inner) {
+  return '<div class="field"><label>' + esc(label) + '</label>' + inner + '</div>';
+}
+
+function accountOptions(selected, filter) {
+  return S.accounts.filter(function (a) { return !a.archived && (!filter || filter(a)); })
+    .map(function (a) {
+      return '<option value="' + a.id + '"' + (a.id === selected ? ' selected' : '') + '>' +
+             esc(a.name) + '</option>';
+    }).join('');
+}
+
+function categoryOptions(selected, includeRta) {
+  var out = includeRta
+    ? '<option value="RTA"' + (selected === 'RTA' ? ' selected' : '') + '>Ready to assign</option>'
+    : '<option value="">Choose a category</option>';
+  var lastGroup = null;
+  budgetableCategories().forEach(function (c) {
+    if (c.type === 'cc_payment') return;
+    if (c.groupName !== lastGroup) {
+      if (lastGroup !== null) out += '</optgroup>';
+      out += '<optgroup label="' + esc(c.groupName) + '">';
+      lastGroup = c.groupName;
+    }
+    out += '<option value="' + c.id + '"' + (c.id === selected ? ' selected' : '') + '>' +
+           esc(c.name) + '</option>';
+  });
+  if (lastGroup !== null) out += '</optgroup>';
+  return out;
+}
+
+// --- the "+" sheet: expense, income, transfer -------------------------------
+
+var DRAFT = null;
+
+function openTxn(existing) {
+  if (!S.accounts.filter(function (a) { return !a.archived; }).length) {
+    toast('Add an account first', true);
+    setTab('accounts');
+    return;
+  }
+  DRAFT = existing || {
+    type: 'expense', date: S.today, accountId: '', toAccountId: '', memo: '',
+    splits: [{ categoryId: '', amount: '' }], amount: '', repeat: false, repeatDay: +S.today.slice(8, 10)
+  };
+  openModal(existing && existing.txnId ? 'Edit transaction' : 'New transaction', txnForm());
+}
+
+function txnForm() {
+  var d = DRAFT;
+  var seg = ['expense', 'income', 'transfer'].map(function (t) {
+    return '<button aria-selected="' + (d.type === t) + '" onclick="setTxnType(\'' + t + '\')">' +
+           t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
+  }).join('');
+
+  var html = '<div class="segment">' + seg + '</div>';
+
+  if (d.type === 'transfer') {
+    html += field('Amount',
+      '<div class="amount-field"><input id="fAmount" inputmode="decimal" placeholder="0.00" value="' +
+      esc(d.amount) + '"></div>');
+    html += '<div class="field"><div class="row2">' +
+      '<div><label>From</label><select id="fAccount">' + accountOptions(d.accountId) + '</select></div>' +
+      '<div><label>To</label><select id="fToAccount">' + accountOptions(d.toAccountId) + '</select></div>' +
+      '</div></div>';
+    html += '<p id="transferHint" class="split-foot" style="border-radius:9px;margin-bottom:14px;display:none"></p>';
+  } else {
+    html += field('Account', '<select id="fAccount">' + accountOptions(d.accountId) + '</select>');
+    html += '<div class="field"><label>' +
+      (d.type === 'income' ? 'Where it goes' : 'Category') + '</label>' +
+      '<div class="splits" id="splits">' + splitRows() + '</div>' +
+      '<div class="split-foot"><button class="add" onclick="addSplit()">Add another category</button>' +
+      '<span class="sum num" id="splitSum"></span></div></div>';
+  }
+
+  html += '<div class="field"><div class="row2">' +
+    '<div><label>Date</label><input type="date" id="fDate" value="' + esc(d.date) + '"></div>' +
+    '<div><label>Memo</label><input id="fMemo" placeholder="Optional" value="' + esc(d.memo) + '"></div>' +
+    '</div></div>';
+
+  html += '<label class="check"><input type="checkbox" id="fRepeat"' + (d.repeat ? ' checked' : '') +
+    ' onchange="document.getElementById(\'repeatDay\').style.display=this.checked?\'block\':\'none\'">' +
+    'Repeat this every month</label>' +
+    '<div class="field" id="repeatDay" style="display:' + (d.repeat ? 'block' : 'none') + '">' +
+    '<label>Day of the month</label><input type="number" min="1" max="31" id="fRepeatDay" value="' +
+    esc(d.repeatDay) + '"><p class="split-foot" style="border-radius:9px;margin-top:8px">' +
+    'A day past the end of a short month runs on its last day instead.</p></div>';
+
+  html += '<button class="btn" onclick="submitTxn()">' +
+          (d.txnId ? 'Save changes' : 'Record it') + '</button>';
+  if (d.txnId) {
+    html += '<button class="btn danger" onclick="removeTxn(\'' + d.txnId + '\')">Delete transaction</button>';
+  }
+  return html;
+}
+
+function splitRows() {
+  return DRAFT.splits.map(function (s, i) {
+    return '<div class="split-row">' +
+      '<select onchange="DRAFT.splits[' + i + '].categoryId=this.value">' +
+        categoryOptions(s.categoryId, DRAFT.type === 'income') + '</select>' +
+      '<input inputmode="decimal" placeholder="0.00" value="' + esc(s.amount) +
+        '" oninput="DRAFT.splits[' + i + '].amount=this.value;updateSum()">' +
+      (DRAFT.splits.length > 1
+        ? '<button class="drop" onclick="dropSplit(' + i + ')" aria-label="Remove line">&times;</button>'
+        : '<span></span>') +
+      '</div>';
+  }).join('');
+}
+
+function readForm() {
+  var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+  DRAFT.date = g('fDate') || DRAFT.date;
+  DRAFT.memo = g('fMemo');
+  DRAFT.accountId = g('fAccount');
+  DRAFT.toAccountId = g('fToAccount');
+  DRAFT.amount = g('fAmount');
+  var rep = document.getElementById('fRepeat');
+  DRAFT.repeat = rep ? rep.checked : false;
+  DRAFT.repeatDay = g('fRepeatDay') || DRAFT.repeatDay;
+}
+
+function setTxnType(t) {
+  readForm();
+  DRAFT.type = t;
+  if (t !== 'transfer' && !DRAFT.splits.length) DRAFT.splits = [{ categoryId: '', amount: '' }];
+  document.getElementById('modalBody').innerHTML = txnForm();
+  updateSum();
+}
+
+function addSplit() {
+  readForm();
+  DRAFT.splits.push({ categoryId: '', amount: '' });
+  document.getElementById('splits').innerHTML = splitRows();
+  updateSum();
+}
+
+function dropSplit(i) {
+  readForm();
+  DRAFT.splits.splice(i, 1);
+  document.getElementById('splits').innerHTML = splitRows();
+  updateSum();
+}
+
+function updateSum() {
+  var el = document.getElementById('splitSum');
+  if (!el) return;
+  var total = DRAFT.splits.reduce(function (a, s) { return a + (parseFloat(s.amount) || 0); }, 0);
+  el.textContent = DRAFT.splits.length > 1 ? 'Total ' + money(total) : '';
+}
+
+function submitTxn() {
+  readForm();
+  var payload = {
+    txnId: DRAFT.txnId || '', month: MONTH, type: DRAFT.type, date: DRAFT.date,
+    accountId: DRAFT.accountId, toAccountId: DRAFT.toAccountId,
+    memo: DRAFT.memo, amount: parseFloat(DRAFT.amount) || 0,
+    splits: DRAFT.splits.map(function (s) {
+      return { categoryId: s.categoryId, amount: parseFloat(s.amount) || 0 };
+    }),
+    repeat: { enabled: DRAFT.repeat, dayOfMonth: parseInt(DRAFT.repeatDay, 10) || 1 }
+  };
+  call('saveTransaction', payload, DRAFT.txnId ? 'Transaction updated' : 'Recorded');
+}
+
+function openTxnDetail(txnId) {
+  var t = S.transactions.filter(function (x) { return x.txnId === txnId; })[0];
+  if (!t) return;
+  openTxn({
+    txnId: t.txnId, type: t.type, date: t.date, accountId: t.accountId,
+    toAccountId: t.toAccountId, memo: t.memo, amount: Math.abs(t.amount).toFixed(2),
+    splits: t.splits.length
+      ? t.splits.map(function (s) { return { categoryId: s.categoryId, amount: Math.abs(s.amount).toFixed(2) }; })
+      : [{ categoryId: '', amount: '' }],
+    repeat: false, repeatDay: +t.date.slice(8, 10)
+  });
+}
+
+function removeTxn(txnId) {
+  call('deleteTransaction', { txnId: txnId, month: MONTH }, 'Transaction deleted');
+}
+
+// --- move money between envelopes -------------------------------------------
+
+function openMoveMoney(categoryId) {
+  var c = categoryById(categoryId);
+  if (!c) return;
+  var others = budgetableCategories().filter(function (x) { return x.id !== categoryId; });
+  if (!others.length) { toast('You need a second category to move money', true); return; }
+
+  openModal('Move money',
+    '<p class="split-foot" style="border-radius:9px;margin-bottom:16px">' +
+      esc(c.name) + ' has <b class="num">' + money(c.available) + '</b> available.</p>' +
+    field('Amount', '<div class="amount-field"><input id="mvAmount" inputmode="decimal" placeholder="0.00"></div>') +
+    field('Direction',
+      '<select id="mvDir">' +
+        '<option value="in">Move into ' + esc(c.name) + '</option>' +
+        '<option value="out">Move out of ' + esc(c.name) + '</option>' +
+      '</select>') +
+    field('Other category',
+      '<select id="mvOther">' + others.map(function (x) {
+        return '<option value="' + x.id + '">' + esc(x.groupName) + ' &middot; ' + esc(x.name) +
+               ' (' + money(x.available) + ')</option>';
+      }).join('') + '</select>') +
+    '<button class="btn" onclick="submitMove(\'' + categoryId + '\')">Move it</button>' +
+    (c.type === 'normal'
+      ? '<div class="inline-actions">' +
+          '<button class="btn ghost" onclick="submitHideCategory(\'' + categoryId + '\', ' +
+            (!c.hidden) + ')">' + (c.hidden ? 'Bring it back' : 'Hide category') + '</button>' +
+          '<button class="btn danger" onclick="submitDeleteCategory(\'' + categoryId + '\')">' +
+            'Delete</button>' +
+        '</div>'
+      : ''));
+}
+
+function submitHideCategory(id, hidden) {
+  call('setCategoryHidden', { month: MONTH, categoryId: id, hidden: hidden },
+       hidden ? 'Category hidden' : 'Category is back');
+}
+
+function submitDeleteCategory(id) {
+  call('deleteCategory', { month: MONTH, categoryId: id }, 'Category deleted');
+}
+
+function submitMove(categoryId) {
+  var amt = parseFloat(document.getElementById('mvAmount').value) || 0;
+  var other = document.getElementById('mvOther').value;
+  var into = document.getElementById('mvDir').value === 'in';
+  call('moveBudget', {
+    month: MONTH, amount: amt,
+    fromCategoryId: into ? other : categoryId,
+    toCategoryId: into ? categoryId : other
+  }, 'Budget moved');
+}
+
+// --- income plan -------------------------------------------------------------
+
+function openIncomePlan(recurringId) {
+  var r = S.recurring.filter(function (x) { return x.id === recurringId; })[0];
+  if (!r) return;
+  var lines = r.splits.map(function (s) {
+    return '<div class="split-row"><span>' + esc(categoryName(s.categoryId)) + '</span>' +
+           '<span class="num" style="text-align:right">' + money(s.amount) + '</span><span></span></div>';
+  }).join('');
+
+  openModal('Assign from income plan',
+    '<p class="split-foot" style="border-radius:9px;margin-bottom:14px">' +
+      'Your plan splits <b class="num">' + money(r.totalAmount) + '</b> across ' + r.splits.length +
+      ' categories on day ' + r.dayOfMonth + '. Applying it sets those assignments for ' +
+      monthLabel(MONTH) + '.</p>' +
+    '<div class="splits" style="max-height:38vh;overflow-y:auto;margin-bottom:14px">' + lines + '</div>' +
+    '<label class="check"><input type="checkbox" id="planReplace"> Replace what is already assigned</label>' +
+    '<button class="btn" onclick="submitIncomePlan(\'' + r.id + '\')">Assign to ' +
+      monthLabel(MONTH) + '</button>');
+}
+
+function submitIncomePlan(id) {
+  call('applyIncomePlan', {
+    month: MONTH, recurringId: id,
+    replace: document.getElementById('planReplace').checked
+  }, 'Budget assigned');
+}
+
+// --- categories --------------------------------------------------------------
+
+function openNewCategory() {
+  var groups = [];
+  S.categories.forEach(function (c) {
+    if (c.type === 'normal' && groups.indexOf(c.groupName) < 0) groups.push(c.groupName);
+  });
+  openModal('Add category',
+    field('Name', '<input id="catName" placeholder="Groceries" autocomplete="off">') +
+    field('Group',
+      '<select id="catGroup" onchange="document.getElementById(\'catNewGroup\').style.display=' +
+      '(this.value===\'__new\'?\'block\':\'none\')">' +
+      groups.map(function (g) { return '<option value="' + esc(g) + '">' + esc(g) + '</option>'; }).join('') +
+      '<option value="__new">New group&hellip;</option></select>') +
+    '<div class="field" id="catNewGroup" style="display:' + (groups.length ? 'none' : 'block') + '">' +
+      '<label>New group name</label><input id="catGroupNew" placeholder="Monthly bills"></div>' +
+    '<button class="btn" onclick="submitCategory()">Add category</button>');
+  if (!groups.length) document.getElementById('catGroup').value = '__new';
+}
+
+function submitCategory() {
+  var group = document.getElementById('catGroup').value;
+  if (group === '__new') group = document.getElementById('catGroupNew').value;
+  call('createCategory', {
+    month: MONTH, name: document.getElementById('catName').value, groupName: group
+  }, 'Category added');
+}
+
+// --- accounts ----------------------------------------------------------------
+
+function openNewAccount() {
+  openModal('Add account',
+    field('Name', '<input id="acName" placeholder="Efectivo" autocomplete="off">') +
+    field('Type',
+      '<select id="acType" onchange="document.getElementById(\'acHint\').textContent=' +
+      'ACCOUNT_HINTS[this.value]">' +
+      '<option value="debit">Cash or bank — money you have</option>' +
+      '<option value="credit">Credit card — money you owe</option>' +
+      '<option value="tracking">Tracking — investments and assets</option></select>') +
+    '<p class="split-foot" id="acHint" style="border-radius:9px;margin-bottom:14px">' +
+      ACCOUNT_HINTS.debit + '</p>' +
+    field('Balance today',
+      '<div class="amount-field"><input id="acBalance" inputmode="decimal" placeholder="0.00"></div>') +
+    '<button class="btn" onclick="submitAccount()">Add account</button>');
+}
+
+var ACCOUNT_HINTS = {
+  debit: 'Its balance becomes money you can assign to categories.',
+  credit: 'Enter what you currently owe as a positive number. Spending on this card ' +
+          'moves money into a payment category so the bill is already covered.',
+  tracking: 'Counts towards net worth but stays out of the budget.'
+};
+
+function submitAccount() {
+  call('createAccount', {
+    month: MONTH,
+    name: document.getElementById('acName').value,
+    type: document.getElementById('acType').value,
+    startingBalance: parseFloat(document.getElementById('acBalance').value) || 0
+  }, 'Account added');
+}
+
+function openAccount(id) {
+  var a = accountById(id);
+  if (!a) return;
+  var kind = a.type === 'credit' ? 'Credit card' : (a.type === 'tracking' ? 'Tracking' : 'Cash or bank');
+  openModal(a.name,
+    '<div class="networth" style="border:1px solid var(--rule);border-radius:12px;margin-bottom:16px">' +
+      '<span class="amount num">' + money(a.balance) + '</span>' +
+      '<span class="caption">' + kind + (a.type === 'credit' && a.balance < 0 ? ' — owed' : '') + '</span>' +
+    '</div>' +
+    field('Set the balance to what the bank says',
+      '<div class="amount-field"><input id="acNewBalance" inputmode="decimal" placeholder="' +
+      a.balance.toFixed(2) + '"></div>') +
+    '<button class="btn" onclick="submitAdjust(\'' + a.id + '\')">Adjust balance</button>' +
+    '<div class="inline-actions">' +
+      '<button class="btn ghost" onclick="submitArchive(\'' + a.id + '\')">' +
+        (a.archived ? 'Restore' : 'Archive') + '</button>' +
+      '<button class="btn danger" onclick="submitDeleteAccount(\'' + a.id + '\', false)">Delete</button>' +
+    '</div>');
+}
+
+function submitAdjust(id) {
+  var v = document.getElementById('acNewBalance').value;
+  if (v === '') { toast('Enter the balance you want', true); return; }
+  call('adjustAccountBalance', { month: MONTH, accountId: id, newBalance: parseFloat(v) || 0 },
+       'Balance adjusted');
+}
+
+function submitArchive(id) { call('archiveAccount', { month: MONTH, accountId: id }, 'Account updated'); }
+
+function submitDeleteAccount(id, force) {
+  api('deleteAccount', { month: MONTH, accountId: id, force: force })
+    .then(function (state) { S = state; closeModal(); render(); toast('Account deleted'); })
+    .catch(function (err) {
+      var msg = cleanError(err);
+      if (msg.indexOf('still has') >= 0 && !force) {
+        openModal('Delete this account?',
+          '<p style="margin:0 0 18px;line-height:1.5">' + esc(msg) + '</p>' +
+          '<button class="btn danger" onclick="submitDeleteAccount(\'' + id + '\', true)">' +
+            'Delete it and its transactions</button>' +
+          '<button class="btn ghost" onclick="closeModal()">Keep it</button>');
+      } else {
+        toast(msg, true);
+      }
+    });
+}
+
+// --- boot ---------------------------------------------------------------------
+
+function load() {
+  if (!S) document.getElementById('panel-plan').innerHTML = '<div class="loading">Opening your budget&hellip;</div>';
+  api('getState', MONTH).then(function (state) {
+    S = state;
+    MONTH = state.month;
+    render();
+  }).catch(function (err) {
+    document.getElementById('panel-plan').innerHTML =
+      '<div class="empty"><h3>Could not load the budget</h3><p>' + esc(cleanError(err)) +
+      '</p><button class="btn" onclick="load()">Try again</button></div>';
+    document.getElementById('panel-plan').classList.add('on');
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.tabbar button').forEach(function (b) {
+    b.addEventListener('click', function () { setTab(b.dataset.tab); });
+  });
+  document.getElementById('fab').addEventListener('click', function () { openTxn(); });
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('scrim').addEventListener('click', closeModal);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+  load();
+});
+</script>
