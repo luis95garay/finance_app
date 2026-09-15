@@ -1,3 +1,8 @@
+# Project-specific: exclude real financial exports and screenshots
+*.csv
+*.jpeg
+*.jpg
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
