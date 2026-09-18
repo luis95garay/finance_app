@@ -28,20 +28,30 @@ function api(name, payload) {
   });
 }
 
-function call(name, payload, okMessage) {
-  if (BUSY) return Promise.resolve();
+/**
+ * A mutation. opts.keepOpen leaves the sheet up so the caller can show its own
+ * result; opts.after(state, prevState) runs once the new state is in place.
+ */
+function call(name, payload, okMessage, opts) {
+  if (BUSY) return Promise.resolve(null);
+  var o = opts || {};
+  var prev = S;
   BUSY = true;
+  beginBusy();
   return api(name, payload).then(function (state) {
     BUSY = false;
+    endBusy();
     if (state && state.month) { S = state; MONTH = state.month; }
-    closeModal();
+    if (!o.keepOpen) closeModal();
     render();
     if (okMessage) toast(okMessage);
+    if (o.after) o.after(state, prev);
     return state;
   }).catch(function (err) {
     // The message is the whole response to a failed write; rethrowing here only
     // produces unhandled rejections, since no caller acts on one.
     BUSY = false;
+    endBusy();
     toast(cleanError(err), true);
     return null;
   });
@@ -89,12 +99,54 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function toast(msg, bad) {
+function toast(msg, bad, sticky) {
   var el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'toast on' + (bad ? ' bad' : '');
   clearTimeout(toast._t);
-  toast._t = setTimeout(function () { el.className = 'toast'; }, bad ? 4200 : 2200);
+  if (!sticky) toast._t = setTimeout(function () { el.className = 'toast'; }, bad ? 4200 : 2200);
+}
+
+function hideToast() {
+  clearTimeout(toast._t);
+  document.getElementById('toast').className = 'toast';
+}
+
+// A write takes a couple of seconds against Apps Script, so say so at once.
+var BUSY_BTN = null;
+var BUSY_TOAST = false;
+
+function beginBusy() {
+  var modal = document.getElementById('modal');
+  if (modal.classList.contains('on')) {
+    modal.classList.add('busy');
+    var btn = document.querySelector('#modalBody .btn:not(.ghost):not(.danger)');
+    if (btn) {
+      BUSY_BTN = { el: btn, html: btn.innerHTML };
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spin"></span>Saving…';
+    }
+    return;
+  }
+  // Nothing on screen to speak through (the inline Plan inputs), so the toast does.
+  BUSY_TOAST = true;
+  toast('Saving…', false, true);
+}
+
+function endBusy() {
+  document.getElementById('modal').classList.remove('busy');
+  if (BUSY_BTN) {
+    if (BUSY_BTN.el.isConnected) {
+      BUSY_BTN.el.disabled = false;
+      BUSY_BTN.el.innerHTML = BUSY_BTN.html;
+    }
+    BUSY_BTN = null;
+  }
+  if (BUSY_TOAST) {
+    // Whatever call() says next replaces it in this same tick, so there is no blink.
+    BUSY_TOAST = false;
+    hideToast();
+  }
 }
 
 // --- lookups ----------------------------------------------------------------
@@ -674,7 +726,7 @@ function openModal(title, body) {
 
 function closeModal() {
   document.getElementById('scrim').classList.remove('on');
-  document.getElementById('modal').classList.remove('on');
+  document.getElementById('modal').classList.remove('on', 'busy');
   document.body.style.overflow = '';
 }
 
@@ -1033,9 +1085,11 @@ function submitAdjust(id) {
 function submitArchive(id) { call('archiveAccount', { month: MONTH, accountId: id }, 'Account updated'); }
 
 function submitDeleteAccount(id, force) {
+  beginBusy();
   api('deleteAccount', { month: MONTH, accountId: id, force: force })
-    .then(function (state) { S = state; closeModal(); render(); toast('Account deleted'); })
+    .then(function (state) { endBusy(); S = state; closeModal(); render(); toast('Account deleted'); })
     .catch(function (err) {
+      endBusy();
       var msg = cleanError(err);
       if (msg.indexOf('still has') >= 0 && !force) {
         openModal('Delete this account?',

@@ -623,6 +623,23 @@ svg.i.fill { fill: currentColor; stroke: none; }
 .modal-head .close { color: var(--ink-soft); font-size: 22px; padding: 2px 8px; }
 .modal-body { padding: 16px 20px 4px; }
 
+/* A write is in flight: the body greys out, the primary button keeps speaking. */
+.modal.busy .modal-body { pointer-events: none; }
+.modal.busy .modal-body > *:not(.sheet-foot) { opacity: 0.5; }
+.modal.busy .btn:disabled { opacity: 1; }
+
+.spin {
+  display: inline-block;
+  width: 14px; height: 14px;
+  margin-right: 9px;
+  vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .segment {
   display: grid;
   grid-auto-flow: column;
