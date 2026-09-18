@@ -619,8 +619,9 @@ svg.i.fill { fill: currentColor; stroke: none; }
   background: var(--surface);
   z-index: 1;
 }
-.modal-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.modal-head h2 { margin: 0; flex: 1; font-size: 16px; font-weight: 700; }
 .modal-head .close { color: var(--ink-soft); font-size: 22px; padding: 2px 8px; }
+.modal-head .back { color: var(--ink-soft); font-size: 26px; line-height: 1; padding: 0 10px 3px 0; }
 .modal-body { padding: 16px 20px 4px; }
 
 /* A write is in flight: the body greys out, the primary button keeps speaking. */
@@ -639,23 +640,6 @@ svg.i.fill { fill: currentColor; stroke: none; }
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-.segment {
-  display: grid;
-  grid-auto-flow: column;
-  gap: 3px;
-  background: var(--field);
-  border-radius: 12px;
-  padding: 3px;
-  margin-bottom: 18px;
-}
-.segment button {
-  padding: 10px 4px;
-  border-radius: 9px;
-  font-size: 13px;
-  color: var(--ink-soft);
-}
-.segment button[aria-selected="true"] { background: var(--action); color: var(--action-ink); font-weight: 700; }
 
 .field { margin-bottom: 14px; }
 .field > label, .field .row2 label {
@@ -743,6 +727,177 @@ svg.i.fill { fill: currentColor; stroke: none; }
 
 .inline-actions { display: flex; gap: 10px; }
 .inline-actions .btn { margin-top: 10px; }
+
+/* --- the transaction sheet ----------------------------------------------- */
+
+.sheet-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 20px;
+}
+.hero-amount {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: center;
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.hero-amount:focus { outline: none; }
+.hero-amount::placeholder { color: var(--ink-faint); }
+
+.type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--raised);
+  font-size: 14px;
+  font-weight: 600;
+}
+.type-pill .i { width: 18px; height: 18px; }
+.type-pill .i:last-child { color: var(--ink-soft); }
+
+/* Grouped rows: one card per cluster of fields, as on the reference screen. */
+.rows {
+  background: var(--field);
+  border: 1px solid var(--rule);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.row-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+}
+.row-item:last-child { border-bottom: 0; }
+.row-item > .i, .row-open > .i { flex: none; color: var(--ink-soft); }
+.row-open {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.row-main { display: block; flex: 1; min-width: 0; }
+.row-label { display: block; font-size: 12px; color: var(--ink-soft); }
+.row-value { display: block; margin-top: 2px; font-size: 15px; }
+.row-value.muted { color: var(--ink-faint); }
+.row-note { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-soft); }
+.row-control {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 15px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.row-control:focus { outline: none; }
+.row-caret { display: flex; flex: none; color: var(--ink-faint); }
+.row-amount {
+  flex: none;
+  width: 94px;
+  padding: 8px 9px;
+  border: 1px solid var(--rule-firm);
+  border-radius: 9px;
+  background: var(--bg);
+  font-size: 13px;
+  text-align: right;
+}
+.row-item .drop { flex: none; padding: 0 2px; color: var(--ink-faint); font-size: 18px; }
+.row-check input { flex: none; width: 20px; height: 20px; accent-color: var(--action); }
+.rows .split-foot { border-top: 1px solid var(--rule); }
+.rows .row-hint { display: block; padding: 0 16px 12px; margin: 0; font-size: 12px; color: var(--ink-faint); }
+
+/* Save stays reachable however long the sheet gets. */
+.sheet-foot {
+  position: sticky;
+  bottom: 0;
+  margin-top: 2px;
+  padding: 10px 0 calc(4px + env(safe-area-inset-bottom));
+  /* --surface, faded out: a gradient cannot interpolate from a hex custom property. */
+  background: linear-gradient(to top, #111527 64%, rgba(17, 21, 39, 0));
+}
+.sheet-foot .btn { margin-top: 0; }
+
+/* Category picker: the envelope balance is the whole point of the list. */
+.cat-search input {
+  width: 100%;
+  padding: 11px 13px;
+  margin-bottom: 4px;
+  border: 1px solid var(--rule-firm);
+  border-radius: 12px;
+  background: var(--field);
+  font-size: 14px;
+}
+.pick.cat-pick {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  width: 100%;
+  font-size: 14px;
+  text-align: left;
+}
+.cat-list { padding-right: 8px; }
+.cat-pick .cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-pick.on .cat-name { color: var(--action-soft); font-weight: 700; }
+
+/* Envelope health, wherever the sheet reports it. */
+.cat-pick .num, .row-note { color: var(--ink-soft); }
+.cat-pick .neg, .row-note.neg, .delta-nums .now.neg { color: var(--neg); }
+.cat-pick .pos, .row-note.pos, .delta-nums .now.pos { color: var(--pos); }
+.cat-pick .warn, .row-note.warn, .delta-nums .now.warn { color: var(--warn); }
+
+.menu-item.type-opt { display: flex; align-items: center; gap: 12px; }
+.type-opt .i { color: var(--ink-soft); }
+.type-opt .type-on { margin-left: auto; color: var(--action-soft); font-weight: 700; }
+
+/* What the write actually did: every envelope it touched, before and after. */
+.confirm { padding: 2px 0 6px; }
+.confirm-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 8px 0 18px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.confirm-head .i { color: var(--pos); }
+.confirm-sub {
+  margin: -10px 0 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.delta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--rule);
+}
+.delta-name { min-width: 0; font-size: 14px; }
+.delta-sub { display: block; font-size: 12px; color: var(--ink-faint); }
+.delta-nums { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.delta-nums .was { color: var(--ink-faint); }
+.delta-nums .arrow { color: var(--ink-faint); }
+.delta-nums .now { font-weight: 700; }
 
 /* Sheet menus: plan actions, month picker, pin editor. */
 .menu-item {

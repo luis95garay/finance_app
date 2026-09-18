@@ -209,6 +209,7 @@ var ICON = {
   chart:  svg('<path d="M4 20V11M10 20V5M16 20v-6M21 20H3"/>'),
   pie:    svg('<path d="M11 3.5a8.5 8.5 0 1 0 9.5 9.5H11z"/><path d="M13.5 1.5v9h9a9 9 0 0 0-9-9z"/>', true),
   bars:   svg('<path d="M4 10h4v8H4zm6-7h4v15h-4zm6 4h4v11h-4zM3 19.5h18V22H3z"/>', true),
+  check:  svg('<path d="M4.5 12.5l5 5 10-10.5"/>'),
   bank:   svg('<path d="M12 2 2.5 7v2h19V7zM4.5 10.5h2.5v7H4.5zm4.5 0h2.5v7H9zm4.5 0H16v7h-2.5zm4.5 0h2v7h-2zM2.5 19h19v2.5h-19z"/>', true)
 };
 
@@ -716,15 +717,41 @@ function stat(value, key, tone) {
 
 // --- modal plumbing ---------------------------------------------------------
 
+var SHEET_STACK = [];
+
 function openModal(title, body) {
-  document.getElementById('modalTitle').textContent = title;
-  document.getElementById('modalBody').innerHTML = body;
+  SHEET_STACK = [];
+  paintSheet(title, body);
   document.getElementById('scrim').classList.add('on');
   document.getElementById('modal').classList.add('on');
   document.body.style.overflow = 'hidden';
 }
 
+function paintSheet(title, body) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = body;
+  document.getElementById('modalBack').hidden = !SHEET_STACK.length;
+  document.getElementById('modal').scrollTop = 0;
+}
+
+/**
+ * A second layer inside the one sheet element: pickers that need the room a
+ * <select> does not have. restore() re-renders the layer underneath, which is
+ * why every caller dumps its fields into its draft before pushing.
+ */
+function pushSheet(title, body, restore) {
+  SHEET_STACK.push({ title: document.getElementById('modalTitle').textContent, restore: restore });
+  paintSheet(title, body);
+}
+
+function popSheet() {
+  var prev = SHEET_STACK.pop();
+  if (!prev) { closeModal(); return; }
+  paintSheet(prev.title, prev.restore());
+}
+
 function closeModal() {
+  SHEET_STACK = [];
   document.getElementById('scrim').classList.remove('on');
   document.getElementById('modal').classList.remove('on', 'busy');
   document.body.style.overflow = '';
@@ -742,28 +769,17 @@ function accountOptions(selected, filter) {
     }).join('');
 }
 
-function categoryOptions(selected, includeRta) {
-  var out = includeRta
-    ? '<option value="RTA"' + (selected === 'RTA' ? ' selected' : '') + '>Ready to assign</option>'
-    : '<option value="">Choose a category</option>';
-  var lastGroup = null;
-  budgetableCategories().forEach(function (c) {
-    if (c.type === 'cc_payment') return;
-    if (c.groupName !== lastGroup) {
-      if (lastGroup !== null) out += '</optgroup>';
-      out += '<optgroup label="' + esc(c.groupName) + '">';
-      lastGroup = c.groupName;
-    }
-    out += '<option value="' + c.id + '"' + (c.id === selected ? ' selected' : '') + '>' +
-           esc(c.name) + '</option>';
-  });
-  if (lastGroup !== null) out += '</optgroup>';
-  return out;
-}
-
 // --- the "+" sheet: expense, income, transfer -------------------------------
 
 var DRAFT = null;
+
+var TXN_TYPES = {
+  expense:  { label: 'Spending', icon: 'cash' },
+  income:   { label: 'Income',   icon: 'bank' },
+  transfer: { label: 'Transfer', icon: 'swap' }
+};
+
+function txnTitle() { return DRAFT && DRAFT.txnId ? 'Edit transaction' : 'New transaction'; }
 
 function openTxn(existing) {
   if (!S.accounts.filter(function (a) { return !a.archived; }).length) {
@@ -775,87 +791,246 @@ function openTxn(existing) {
     type: 'expense', date: S.today, accountId: '', toAccountId: '', memo: '',
     splits: [{ categoryId: '', amount: '' }], amount: '', repeat: false, repeatDay: +S.today.slice(8, 10)
   };
-  openModal(existing && existing.txnId ? 'Edit transaction' : 'New transaction', txnForm());
+  openModal(txnTitle(), txnForm());
 }
 
 function txnForm() {
   var d = DRAFT;
-  var seg = ['expense', 'income', 'transfer'].map(function (t) {
-    return '<button aria-selected="' + (d.type === t) + '" onclick="setTxnType(\'' + t + '\')">' +
-           t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
-  }).join('');
+  var t = TXN_TYPES[d.type];
 
-  var html = '<div class="segment">' + seg + '</div>';
+  var html = '<div class="sheet-hero">' + heroAmount() +
+    '<button class="type-pill" onclick="openTypePicker()">' + ICON[t.icon] +
+    '<span>' + t.label + '</span>' + ICON.down + '</button></div>';
 
   if (d.type === 'transfer') {
-    html += field('Amount',
-      '<div class="amount-field"><input id="fAmount" inputmode="decimal" placeholder="0.00" value="' +
-      esc(d.amount) + '"></div>');
-    html += '<div class="field"><div class="row2">' +
-      '<div><label>From</label><select id="fAccount">' + accountOptions(d.accountId) + '</select></div>' +
-      '<div><label>To</label><select id="fToAccount">' + accountOptions(d.toAccountId) + '</select></div>' +
-      '</div></div>';
-    html += '<p id="transferHint" class="split-foot" style="border-radius:9px;margin-bottom:14px;display:none"></p>';
+    html += '<div class="rows">' +
+      rowSelect('From', 'fAccount', 'swap', accountOptions(d.accountId)) +
+      rowSelect('To', 'fToAccount', 'swap', accountOptions(d.toAccountId)) +
+      rowDate() + '</div>';
   } else {
-    html += field('Account', '<select id="fAccount">' + accountOptions(d.accountId) + '</select>');
-    html += '<div class="field"><label>' +
-      (d.type === 'income' ? 'Where it goes' : 'Category') + '</label>' +
-      '<div class="splits" id="splits">' + splitRows() + '</div>' +
-      '<div class="split-foot"><button class="add" onclick="addSplit()">Add another category</button>' +
-      '<span class="sum num" id="splitSum"></span></div></div>';
+    html += '<div class="rows">' + categoryRows() + '</div>' +
+      '<div class="rows">' + rowSelect('Account', 'fAccount', 'card', accountOptions(d.accountId)) +
+      rowDate() + '</div>';
   }
 
-  html += '<div class="field"><div class="row2">' +
-    '<div><label>Date</label><input type="date" id="fDate" value="' + esc(d.date) + '"></div>' +
-    '<div><label>Memo</label><input id="fMemo" placeholder="Optional" value="' + esc(d.memo) + '"></div>' +
+  html += '<div class="rows"><div class="row-item">' + ICON.edit +
+    '<span class="row-main"><span class="row-label">Memo</span>' +
+    '<input class="row-control" id="fMemo" placeholder="Optional" value="' + esc(d.memo) + '">' +
+    '</span></div></div>';
+
+  html += '<div class="rows">' +
+    '<label class="row-item row-check">' + ICON.calendar +
+      '<span class="row-main"><span class="row-label">Repeat this every month</span></span>' +
+      '<input type="checkbox" id="fRepeat"' + (d.repeat ? ' checked' : '') +
+      ' onchange="toggleRepeatDay(this.checked)"></label>' +
+    '<div id="repeatDay"' + (d.repeat ? '' : ' hidden') + '>' +
+      '<div class="row-item"><span class="row-main">' +
+        '<span class="row-label">Day of the month</span>' +
+        '<input class="row-control num" type="number" min="1" max="31" id="fRepeatDay" value="' +
+        esc(d.repeatDay) + '"></span></div>' +
+      '<small class="row-hint">A day past the end of a short month runs on its last day instead.</small>' +
     '</div></div>';
 
-  html += '<label class="check"><input type="checkbox" id="fRepeat"' + (d.repeat ? ' checked' : '') +
-    ' onchange="document.getElementById(\'repeatDay\').style.display=this.checked?\'block\':\'none\'">' +
-    'Repeat this every month</label>' +
-    '<div class="field" id="repeatDay" style="display:' + (d.repeat ? 'block' : 'none') + '">' +
-    '<label>Day of the month</label><input type="number" min="1" max="31" id="fRepeatDay" value="' +
-    esc(d.repeatDay) + '"><p class="split-foot" style="border-radius:9px;margin-top:8px">' +
-    'A day past the end of a short month runs on its last day instead.</p></div>';
-
-  html += '<button class="btn" onclick="submitTxn()">' +
-          (d.txnId ? 'Save changes' : 'Record it') + '</button>';
   if (d.txnId) {
     html += '<button class="btn danger" onclick="removeTxn(\'' + d.txnId + '\')">Delete transaction</button>';
   }
+  html += '<div class="sheet-foot"><button class="btn" onclick="submitTxn()">' +
+          (d.txnId ? 'Save changes' : 'Record it') + '</button></div>';
   return html;
 }
 
-function splitRows() {
-  return DRAFT.splits.map(function (s, i) {
-    return '<div class="split-row">' +
-      '<select onchange="DRAFT.splits[' + i + '].categoryId=this.value">' +
-        categoryOptions(s.categoryId, DRAFT.type === 'income') + '</select>' +
-      '<input inputmode="decimal" placeholder="0.00" value="' + esc(s.amount) +
-        '" oninput="DRAFT.splits[' + i + '].amount=this.value;updateSum()">' +
-      (DRAFT.splits.length > 1
-        ? '<button class="drop" onclick="dropSplit(' + i + ')" aria-label="Remove line">&times;</button>'
-        : '<span></span>') +
-      '</div>';
-  }).join('');
+/**
+ * One big number at the top. On a single-category entry it *is* that line's
+ * amount; once the entry is split it becomes the running total of the lines,
+ * since the backend has no transaction-level amount to fall back on.
+ */
+function heroAmount() {
+  if (DRAFT.type !== 'transfer' && DRAFT.splits.length > 1) {
+    return '<div class="hero-amount num" id="heroTotal">' + money(splitTotal()) + '</div>';
+  }
+  return '<input class="hero-amount num" id="fHero" inputmode="decimal" placeholder="' + money(0) +
+    '" value="' + esc(heroDisplay()) + '" oninput="setHeroAmount(this.value)"' +
+    ' onfocus="this.value=heroRaw()" onblur="this.value=heroDisplay()">';
 }
 
-function readForm() {
-  var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
-  DRAFT.date = g('fDate') || DRAFT.date;
-  DRAFT.memo = g('fMemo');
-  DRAFT.accountId = g('fAccount');
-  DRAFT.toAccountId = g('fToAccount');
-  DRAFT.amount = g('fAmount');
-  var rep = document.getElementById('fRepeat');
-  DRAFT.repeat = rep ? rep.checked : false;
-  DRAFT.repeatDay = g('fRepeatDay') || DRAFT.repeatDay;
+function heroRaw() {
+  if (DRAFT.type === 'transfer') return DRAFT.amount || '';
+  return DRAFT.splits[0] ? (DRAFT.splits[0].amount || '') : '';
+}
+
+// Formatted only while the field is at rest; the draft always holds the raw text.
+function heroDisplay() {
+  var raw = heroRaw();
+  return raw === '' ? '' : money(parseFloat(raw) || 0);
+}
+
+function setHeroAmount(v) {
+  if (DRAFT.type === 'transfer') DRAFT.amount = v;
+  else if (DRAFT.splits[0]) DRAFT.splits[0].amount = v;
+}
+
+function rowSelect(label, id, icon, options) {
+  return '<label class="row-item">' + ICON[icon] +
+    '<span class="row-main"><span class="row-label">' + esc(label) + '</span>' +
+    '<select class="row-control" id="' + id + '">' + options + '</select></span>' +
+    '<span class="row-caret">' + ICON.down + '</span></label>';
+}
+
+function rowDate() {
+  return '<label class="row-item">' + ICON.calendar +
+    '<span class="row-main"><span class="row-label">Date</span>' +
+    '<input class="row-control" type="date" id="fDate" value="' + esc(DRAFT.date) + '"></span></label>';
+}
+
+function categoryRows() {
+  var label = DRAFT.type === 'income' ? 'Where it goes' : 'Category';
+  var multi = DRAFT.splits.length > 1;
+  return DRAFT.splits.map(function (s, i) {
+    return catRow(i, multi ? label + ' ' + (i + 1) : label, multi);
+  }).join('') +
+    '<div class="split-foot"><button class="add" onclick="addSplit()">Add another category</button>' +
+    '<span class="sum num" id="splitSum"></span></div>';
+}
+
+function catRow(i, label, withAmount) {
+  var s = DRAFT.splits[i];
+  var c = categoryInfo(s.categoryId);
+  return '<div class="row-item">' +
+    '<button class="row-open" onclick="openCategoryPicker(' + i + ')">' + ICON.pie +
+      '<span class="row-main"><span class="row-label">' + esc(label) + '</span>' +
+      (c
+        ? '<span class="row-value">' + esc(c.name) + '</span>' +
+          '<span class="row-note num ' + c.tone + '">' + money(c.available) + ' available</span>'
+        : '<span class="row-value muted">Choose a category</span>') +
+      '</span></button>' +
+    (withAmount
+      ? '<input class="row-amount num" inputmode="decimal" placeholder="0.00" value="' + esc(s.amount) +
+          '" oninput="DRAFT.splits[' + i + '].amount=this.value;updateSum()">' +
+        '<button class="drop" onclick="dropSplit(' + i + ')" aria-label="Remove line">&times;</button>'
+      : '<span class="row-caret">' + ICON.right + '</span>') +
+    '</div>';
+}
+
+/** Name and envelope balance for anything a split can point at, RTA included. */
+function categoryInfo(id) {
+  if (!id) return null;
+  if (id === 'RTA') {
+    var rta = S.readyToAssign;
+    return { id: 'RTA', name: 'Ready to assign', available: rta,
+             tone: rta < -0.004 ? 'neg' : (rta > 0.005 ? 'pos' : '') };
+  }
+  var c = categoryById(id);
+  if (!c) return null;
+  return { id: c.id, name: c.name, available: c.available, tone: pillTone(c) };
+}
+
+// --- picking the type and the envelope --------------------------------------
+
+function openTypePicker() {
+  readForm();
+  var body = Object.keys(TXN_TYPES).map(function (k) {
+    return '<button class="menu-item type-opt" onclick="setTxnType(\'' + k + '\')">' +
+      ICON[TXN_TYPES[k].icon] + '<span>' + TXN_TYPES[k].label + '</span>' +
+      (DRAFT.type === k ? '<span class="type-on">&#10003;</span>' : '') + '</button>';
+  }).join('');
+  pushSheet('Transaction type', body, txnForm);
 }
 
 function setTxnType(t) {
-  readForm();
+  var prev = SHEET_STACK.pop();
+  // The amount lives in a different place per type, so carry it across by hand.
+  var amount = DRAFT.type !== 'transfer' && DRAFT.splits.length > 1
+    ? String(splitTotal() || '')
+    : heroRaw();
   DRAFT.type = t;
-  if (t !== 'transfer' && !DRAFT.splits.length) DRAFT.splits = [{ categoryId: '', amount: '' }];
+  if (!DRAFT.splits.length) DRAFT.splits = [{ categoryId: '', amount: '' }];
+  if (t === 'transfer') DRAFT.amount = amount;
+  else if (DRAFT.splits.length === 1 && !DRAFT.splits[0].amount) DRAFT.splits[0].amount = amount;
+  // Income lands in Ready to Assign unless told otherwise; spending never does.
+  DRAFT.splits.forEach(function (s) {
+    if (t === 'income' && !s.categoryId) s.categoryId = 'RTA';
+    if (t !== 'income' && s.categoryId === 'RTA') s.categoryId = '';
+  });
+  paintSheet(prev ? prev.title : txnTitle(), txnForm());
+  updateSum();
+}
+
+function openCategoryPicker(i) {
+  readForm();
+  var body = '<div class="cat-search"><input id="catSearch" placeholder="Search categories"' +
+      ' autocomplete="off" oninput="filterCategoryPick(' + i + ', this.value)"></div>' +
+    // S only ever holds one month, so say which one these balances come from.
+    (DRAFT.date.slice(0, 7) !== MONTH
+      ? '<p class="split-foot" style="border-radius:9px;margin-bottom:6px">Balances shown are for ' +
+        esc(monthLabel(MONTH)) + '.</p>'
+      : '') +
+    '<div class="pick-list cat-list" id="catPickList">' + categoryPickList(i, '') + '</div>';
+  pushSheet(DRAFT.type === 'income' ? 'Where it goes' : 'Choose a category', body, txnForm);
+}
+
+/** Dormant envelopes stay out of the way unless this line already points at one. */
+function pickableCategories(current) {
+  return S.categories.filter(function (c) {
+    return c.type === 'normal' && (!c.hidden || c.id === current);
+  }).sort(function (a, b) { return a.sortOrder - b.sortOrder; });
+}
+
+function categoryPickList(i, q) {
+  var current = DRAFT.splits[i] ? DRAFT.splits[i].categoryId : '';
+  var needle = String(q || '').toLowerCase();
+  var hit = function (name, group) {
+    return !needle || (name + ' ' + group).toLowerCase().indexOf(needle) >= 0;
+  };
+  var out = '', lastGroup = null, shown = 0;
+
+  if (DRAFT.type === 'income' && hit('Ready to assign', '')) {
+    out += catPickRow(i, categoryInfo('RTA'), current === 'RTA');
+    shown++;
+  }
+  pickableCategories(current).forEach(function (c) {
+    if (!hit(c.name, c.groupName)) return;
+    if (c.groupName !== lastGroup) {
+      out += '<div class="pick-group">' + esc(c.groupName) + '</div>';
+      lastGroup = c.groupName;
+    }
+    out += catPickRow(i, categoryInfo(c.id), c.id === current);
+    shown++;
+  });
+  return shown ? out : '<div class="empty"><p>Nothing matches that.</p></div>';
+}
+
+function catPickRow(i, c, on) {
+  return '<button class="pick cat-pick' + (on ? ' on' : '') + '" onclick="chooseCategory(' + i +
+    ', \'' + c.id + '\')"><span class="cat-name">' + esc(c.name) + '</span>' +
+    '<span class="num ' + c.tone + '">' + money(c.available) + '</span></button>';
+}
+
+function filterCategoryPick(i, q) {
+  document.getElementById('catPickList').innerHTML = categoryPickList(i, q);
+}
+
+function chooseCategory(i, id) {
+  if (DRAFT.splits[i]) DRAFT.splits[i].categoryId = id;
+  popSheet();
+}
+
+// --- draft plumbing ---------------------------------------------------------
+
+function readForm() {
+  var set = function (id, fn) { var e = document.getElementById(id); if (e) fn(e); };
+  set('fDate', function (e) { if (e.value) DRAFT.date = e.value; });
+  set('fMemo', function (e) { DRAFT.memo = e.value; });
+  set('fAccount', function (e) { DRAFT.accountId = e.value; });
+  set('fToAccount', function (e) { DRAFT.toAccountId = e.value; });
+  set('fRepeat', function (e) { DRAFT.repeat = e.checked; });
+  set('fRepeatDay', function (e) { if (e.value) DRAFT.repeatDay = e.value; });
+  // Amounts are not read here: they write into DRAFT as they are typed, so they
+  // survive the sub-sheets and the type switch on their own.
+}
+
+function toggleRepeatDay(on) { document.getElementById('repeatDay').hidden = !on; }
+
+function repaintTxn() {
   document.getElementById('modalBody').innerHTML = txnForm();
   updateSum();
 }
@@ -863,23 +1038,29 @@ function setTxnType(t) {
 function addSplit() {
   readForm();
   DRAFT.splits.push({ categoryId: '', amount: '' });
-  document.getElementById('splits').innerHTML = splitRows();
-  updateSum();
+  repaintTxn();
 }
 
 function dropSplit(i) {
   readForm();
   DRAFT.splits.splice(i, 1);
-  document.getElementById('splits').innerHTML = splitRows();
-  updateSum();
+  if (!DRAFT.splits.length) DRAFT.splits = [{ categoryId: '', amount: '' }];
+  repaintTxn();
+}
+
+function splitTotal() {
+  return DRAFT.splits.reduce(function (a, s) { return a + (parseFloat(s.amount) || 0); }, 0);
 }
 
 function updateSum() {
-  var el = document.getElementById('splitSum');
-  if (!el) return;
-  var total = DRAFT.splits.reduce(function (a, s) { return a + (parseFloat(s.amount) || 0); }, 0);
-  el.textContent = DRAFT.splits.length > 1 ? 'Total ' + money(total) : '';
+  var total = splitTotal();
+  var sum = document.getElementById('splitSum');
+  if (sum) sum.textContent = DRAFT.splits.length > 1 ? 'Total ' + money(total) : '';
+  var hero = document.getElementById('heroTotal');
+  if (hero) hero.textContent = money(total);
 }
+
+// --- writing it, and showing what it did ------------------------------------
 
 function submitTxn() {
   readForm();
@@ -892,7 +1073,88 @@ function submitTxn() {
     }),
     repeat: { enabled: DRAFT.repeat, dayOfMonth: parseInt(DRAFT.repeatDay, 10) || 1 }
   };
-  call('saveTransaction', payload, DRAFT.txnId ? 'Transaction updated' : 'Recorded');
+  var before = txnSnapshot(payload);
+  call('saveTransaction', payload, null, {
+    keepOpen: true,
+    after: function () { showTxnResult(payload, before); }
+  });
+}
+
+/**
+ * What the envelopes and accounts hold right now. The same lookups read the new
+ * state once the write lands, and the difference is the confirmation card.
+ */
+function txnSnapshot(p) {
+  var cats = [], accounts = [], seen = {};
+  var addCat = function (id) {
+    if (!id || seen['c' + id]) return;
+    var c = categoryInfo(id);
+    if (!c) return;
+    seen['c' + id] = 1;
+    var cat = categoryById(id);
+    cats.push({ id: c.id, name: c.name, available: c.available,
+                kind: cat && cat.type === 'cc_payment' ? 'payment envelope' : 'available' });
+  };
+  var addAccount = function (id) {
+    if (!id || seen['a' + id]) return;
+    var a = accountById(id);
+    if (!a) return;
+    seen['a' + id] = 1;
+    accounts.push({ id: a.id, name: a.name, balance: a.balance });
+    addCat(a.paymentCategoryId);   // spending on a card also moves its payment envelope
+  };
+  p.splits.forEach(function (s) { if (s.amount) addCat(s.categoryId); });
+  addAccount(p.accountId);
+  addAccount(p.toAccountId);
+  return { cats: cats, accounts: accounts };
+}
+
+function showTxnResult(payload, before) {
+  // Only what actually moved: a card-to-card transfer leaves envelopes alone.
+  var moved = function (was, now) { return Math.abs(now - was) > 0.004; };
+  var rows = before.cats.map(function (b) {
+    var now = categoryInfo(b.id);
+    var val = now ? now.available : b.available;
+    return moved(b.available, val) ? deltaRow(b.name, b.kind, b.available, val, now ? now.tone : '') : '';
+  }).join('') + before.accounts.map(function (b) {
+    var a = accountById(b.id);
+    var val = a ? a.balance : b.balance;
+    return moved(b.balance, val) ? deltaRow(b.name, 'balance', b.balance, val, '') : '';
+  }).join('');
+
+  var total = payload.type === 'transfer'
+    ? payload.amount
+    : payload.splits.reduce(function (a, s) { return a + s.amount; }, 0);
+
+  SHEET_STACK = [];
+  paintSheet(payload.txnId ? 'Updated' : 'Recorded',
+    '<div class="confirm"><div class="confirm-head">' + ICON.check +
+      '<span class="num">' + money(total) + '</span></div>' +
+      '<p class="confirm-sub">' + esc(TXN_TYPES[payload.type].label) + ' &middot; ' +
+      esc(accountName(payload.accountId)) + ' &middot; ' + esc(payload.date) + '</p>' +
+      rows + '</div>' +
+    '<div class="inline-actions">' +
+      '<button class="btn ghost" onclick="closeModal()">Done</button>' +
+      '<button class="btn" onclick="recordAnother()">Record another</button></div>');
+}
+
+function deltaRow(name, kind, was, now, tone) {
+  return '<div class="delta"><span class="delta-name">' + esc(name) +
+    '<small class="delta-sub">' + esc(kind) + '</small></span>' +
+    '<span class="delta-nums"><span class="num was">' + money(was) + '</span>' +
+    '<span class="arrow">&rarr;</span>' +
+    '<span class="num now ' + (tone || '') + '">' + money(now) + '</span></span></div>';
+}
+
+/** Logging a few things in a row: keep the account and the date, drop the rest. */
+function recordAnother() {
+  var prev = DRAFT || {};
+  var date = prev.date || S.today;
+  openTxn({
+    type: prev.type || 'expense', date: date, accountId: prev.accountId || '',
+    toAccountId: prev.toAccountId || '', memo: '', splits: [{ categoryId: '', amount: '' }],
+    amount: '', repeat: false, repeatDay: +date.slice(8, 10)
+  });
 }
 
 function openTxnDetail(txnId) {
@@ -1125,8 +1387,12 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   document.getElementById('fab').addEventListener('click', function () { openTxn(); });
   document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('modalBack').addEventListener('click', popSheet);
   document.getElementById('scrim').addEventListener('click', closeModal);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (SHEET_STACK.length) popSheet(); else closeModal();
+  });
   load();
 });
 </script>
