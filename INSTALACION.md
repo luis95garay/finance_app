@@ -118,7 +118,7 @@ Queda con ícono propio y sin barra de navegador.
 
 ## Usar la app
 
-La interfaz imita la app móvil de YNAB, en modo oscuro. Abajo hay cinco pestañas y el botón
+La interfaz imita la app móvil de YNAB. Abajo hay cinco pestañas y el botón
 **+ Transaction** (en Home, Plan y Spending) abre el formulario de movimientos.
 
 | Pestaña | Qué muestra |
@@ -132,6 +132,19 @@ La interfaz imita la app móvil de YNAB, en modo oscuro. Abajo hay cinco pestañ
 **Sobres fijados (Pinned):** en Home tocá **Edit**, marcá los sobres que querés ver y
 **Save**. Se guardan en la hoja `Config` (clave `pinnedCategories`), así que se ven igual en
 todos tus dispositivos. Al instalar por primera vez la tarjeta arranca vacía.
+
+**Apariencia (tres temas):** en **Home**, el ícono ◐ de la esquina superior derecha abre
+*Apariencia* con tres diseños:
+
+| Tema | Cómo se ve |
+|---|---|
+| **Medianoche** | El original: azul marino oscuro, pastillas de color sobre filas casi negras. |
+| **Papel** | Claro y cálido: fondo hueso, tinta café, índigo para lo que se toca y verde salvia. |
+| **Bosque** | Oscuro cálido: verdes profundos con acentos dorados. |
+
+Tocá uno y se aplica al instante, sin cerrar la ventana, así podés ir y volver comparando. La
+elección queda en el navegador (para que no parpadee al abrir) y también en la hoja `Config`
+(clave `theme`), así te sigue al celular o a otra computadora.
 
 ---
 

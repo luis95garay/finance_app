@@ -5,6 +5,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Budget</title>
+  <!--
+    The theme has to be on <html> before the first paint, or a light theme
+    flashes dark while the page loads. localStorage can throw inside the Apps
+    Script sandbox iframe, so a failure here just leaves the default theme.
+  -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('theme');
+        if (t === 'papel' || t === 'bosque') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
   <?!= include('Estilos'); ?>
 </head>
 <body>

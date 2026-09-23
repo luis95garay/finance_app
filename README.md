@@ -33,7 +33,7 @@ despliegan como web app. Los datos quedan en tu propio Drive.
 |---|---|
 | `Codigo.gs` | Backend completo: esquema, motor de cálculo, API de lectura/escritura, importador de YNAB, tareas programadas. |
 | `Index.html` | Shell de la página (barra de tabs, modal, navegación de meses). |
-| `Estilos.html` | Todo el CSS. |
+| `Estilos.html` | Todo el CSS, incluidas las tres paletas (Medianoche, Papel, Bosque) como bloques de variables sobre `:root[data-theme]`. |
 | `Script.html` | Todo el JS del frontend, hablando con el backend vía `google.script.run`. |
 
 No hay separación frontend/backend ni pipeline de build: los cuatro archivos viven en un solo

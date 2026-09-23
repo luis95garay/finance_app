@@ -210,7 +210,8 @@ var ICON = {
   pie:    svg('<path d="M11 3.5a8.5 8.5 0 1 0 9.5 9.5H11z"/><path d="M13.5 1.5v9h9a9 9 0 0 0-9-9z"/>', true),
   bars:   svg('<path d="M4 10h4v8H4zm6-7h4v15h-4zm6 4h4v11h-4zM3 19.5h18V22H3z"/>', true),
   check:  svg('<path d="M4.5 12.5l5 5 10-10.5"/>'),
-  bank:   svg('<path d="M12 2 2.5 7v2h19V7zM4.5 10.5h2.5v7H4.5zm4.5 0h2.5v7H9zm4.5 0H16v7h-2.5zm4.5 0h2v7h-2zM2.5 19h19v2.5h-19z"/>', true)
+  bank:   svg('<path d="M12 2 2.5 7v2h19V7zM4.5 10.5h2.5v7H4.5zm4.5 0h2.5v7H9zm4.5 0H16v7h-2.5zm4.5 0h2v7h-2zM2.5 19h19v2.5h-19z"/>', true),
+  theme:  svg('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/>')
 };
 
 function iconBtn(icon, label, onclick, pressed) {
@@ -244,6 +245,7 @@ function renderTopbar() {
   var title = '', actions = '';
   if (TAB === 'home') {
     title = '<h1>My Budget</h1>';
+    actions = iconBtn(ICON.theme, 'Appearance', 'openThemePicker()');
   } else if (TAB === 'plan') {
     title = '<button class="month-btn" onclick="openMonthPicker()" aria-label="Choose month">' +
             '<h1>' + shortMonth(MONTH) + ' ' + MONTH.slice(0, 4) + '</h1>' +
@@ -630,7 +632,9 @@ function renderAccounts() {
 
 // --- Reflect ----------------------------------------------------------------
 
-var BREAKDOWN_COLORS = ['#5558F0', '#8BC34A', '#D9AE3A', '#B83B3B', '#4447C8', '#7C83F5'];
+// Chart slices live in the palette too, so they follow the theme (see Estilos.html).
+var BREAKDOWN_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)',
+                        'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)'];
 
 function renderReflect() {
   var el = document.getElementById('panel-reflect');
@@ -1408,6 +1412,85 @@ function submitDeleteAccount(id, force) {
     });
 }
 
+// --- theme --------------------------------------------------------------------
+
+/*
+ * Switching a theme is one attribute on <html>; everything else is CSS. The
+ * swatch hexes are duplicated from Estilos.html on purpose — a card has to
+ * paint the palette it *would* switch to, which the live tokens cannot do.
+ */
+var THEMES = [
+  { id: 'midnight', label: 'Medianoche', desc: 'Azul marino oscuro, el de siempre',
+    swatches: ['#05070D', '#111527', '#5558F0', '#8BC34A'] },
+  { id: 'papel',    label: 'Papel',      desc: 'Claro y cálido: hueso, tinta e índigo',
+    swatches: ['#F7F4EE', '#FFFFFF', '#4B4AD6', '#3E7B3A'] },
+  { id: 'bosque',   label: 'Bosque',     desc: 'Oscuro cálido: verde profundo y oro',
+    swatches: ['#0B120E', '#14201A', '#C9A227', '#6FBF73'] }
+];
+
+var THEME_SAVE = null;
+
+function themeIsValid(id) {
+  return THEMES.some(function (t) { return t.id === id; });
+}
+
+/** localStorage first (it is what painted the page), then whatever the server has. */
+function currentTheme() {
+  var stored = null;
+  try { stored = localStorage.getItem('theme'); } catch (e) {}
+  if (themeIsValid(stored)) return stored;
+  var fromServer = S && S.config && S.config.theme;
+  return themeIsValid(fromServer) ? fromServer : 'midnight';
+}
+
+function applyTheme(id) {
+  if (!themeIsValid(id)) id = 'midnight';
+  if (id === 'midnight') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', id);
+  try { localStorage.setItem('theme', id); } catch (e) {}
+}
+
+/**
+ * The point of the picker is flipping between two themes to compare them, so a
+ * tap repaints and nothing else: the sheet stays open, no toast, no busy state.
+ * The server copy (so the choice follows you to another device) is saved on a
+ * debounce and its result ignored — a theme is a preference, not budget data.
+ */
+function pickTheme(id) {
+  applyTheme(id);
+  paintThemePicker();
+  if (THEME_SAVE) clearTimeout(THEME_SAVE);
+  THEME_SAVE = setTimeout(function () {
+    THEME_SAVE = null;
+    api('setTheme', { theme: id, month: MONTH }).catch(function () {});
+  }, 600);
+}
+
+function themeCard(t, active) {
+  return '<button class="theme-card' + (active ? ' on' : '') + '" onclick="pickTheme(\'' + t.id + '\')"' +
+         ' aria-pressed="' + active + '">' +
+         '<span class="theme-swatch" aria-hidden="true">' +
+           t.swatches.map(function (c) { return '<i style="background:' + c + '"></i>'; }).join('') +
+         '</span>' +
+         '<span class="label"><b>' + esc(t.label) + '</b><span>' + esc(t.desc) + '</span></span>' +
+         '<span class="tick">' + (active ? ICON.check : '') + '</span>' +
+         '</button>';
+}
+
+function paintThemePicker() {
+  var now = currentTheme();
+  document.getElementById('modalBody').innerHTML =
+    '<div class="theme-grid">' +
+      THEMES.map(function (t) { return themeCard(t, t.id === now); }).join('') +
+    '</div>' +
+    '<p class="theme-hint">Se aplica al instante. Tocá otro para comparar.</p>';
+}
+
+function openThemePicker() {
+  openModal('Apariencia', '');
+  paintThemePicker();
+}
+
 // --- boot ---------------------------------------------------------------------
 
 function load() {
@@ -1415,6 +1498,8 @@ function load() {
   api('getState', MONTH).then(function (state) {
     S = state;
     MONTH = state.month;
+    // First visit from this browser: take the theme the account last chose.
+    applyTheme(currentTheme());
     render();
   }).catch(function (err) {
     document.getElementById('panel-plan').innerHTML =

@@ -30,7 +30,10 @@ var SCHEMA = {
 
 var RTA = 'RTA';                       // pseudo-category id for Ready to Assign
 var CC_GROUP = 'Credit Card Payments';
-var DEFAULTS = { currency: '$', locale: 'en-US', schemaVersion: '2' };
+var DEFAULTS = { currency: '$', locale: 'en-US', schemaVersion: '2', theme: 'midnight' };
+
+// Palettes the web app ships; see Estilos.html. An unknown value falls back to midnight.
+var THEMES = ['midnight', 'papel', 'bosque'];
 
 // ---------------------------------------------------------------------------
 // Web app entry points
@@ -760,6 +763,19 @@ function setPinnedCategories(payload) {
     var row = readSheet_('Config').filter(function (r) { return r.key === 'pinnedCategories'; })[0];
     if (row) sheet_('Config').getRange(row._row, 2).setValue(value);
     else appendRows_('Config', [{ key: 'pinnedCategories', value: value }]);
+    delete _cache.Config;
+    return getState(payload.month);
+  });
+}
+
+/** Stores the chosen palette in Config so it follows the user to another device. */
+function setTheme(payload) {
+  return withLock_(function () {
+    var theme = String(payload.theme || '');
+    if (THEMES.indexOf(theme) < 0) throw new Error('Unknown theme: ' + theme);
+    var row = readSheet_('Config').filter(function (r) { return r.key === 'theme'; })[0];
+    if (row) sheet_('Config').getRange(row._row, 2).setValue(theme);
+    else appendRows_('Config', [{ key: 'theme', value: theme }]);
     delete _cache.Config;
     return getState(payload.month);
   });

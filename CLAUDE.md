@@ -16,7 +16,7 @@ expense-logging POC and grew into a full budget app after the user provided a re
 |---|---|
 | `Codigo.gs` | The entire backend: schema, compute engine, read/write API, YNAB importer, scheduling. This is where almost all logic lives. |
 | `Index.html` | Page shell only (tab bar, modal skeleton, month nav). Uses `<?!= include('Estilos'); ?>` / `<?!= include('Script'); ?>` — Apps Script's `HtmlService` template syntax, evaluated server-side by `doGet()`. |
-| `Estilos.html` | All CSS. |
+| `Estilos.html` | All CSS. Every colour is a custom property; the three themes (`midnight` default, `papel`, `bosque`) are token-override blocks keyed on `:root[data-theme]`, so a new colour belongs in the palettes, never inline in a rule. |
 | `Script.html` | All frontend JS. Talks to the backend exclusively through `google.script.run.<functionName>(payload)`, always via the `api()`/`call()` wrappers in this file — never call `google.script.run` directly elsewhere. |
 | `INSTALACION.md` | User-facing install/deploy guide (Spanish). Keep it in sync with any change to setup steps, menu items, or the import flow. |
 

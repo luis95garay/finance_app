@@ -1,13 +1,27 @@
 <style>
 /* ---------------------------------------------------------------------------
-   Dark navy, modelled on the YNAB mobile app: black headers, navy rows and
-   rounded cards, and colored pills as the one loud element on each envelope.
+   Three palettes, one layout. Every colour in this file is a custom property;
+   a theme is nothing but a block of token overrides keyed on <html data-theme>,
+   so switching one is a single attribute write and no re-render.
+
+     midnight  the original: dark navy, YNAB-mobile flavoured  (the default)
+     papel     warm paper: bone, ink brown, indigo, sage
+     bosque    warm dark: deep forest green with gold accents
+
+   Two rules to keep in mind when editing a palette:
+     - --pos, --warn and --neg are each used both as a fill (pills, banners) and
+       as text on a surface, so each needs >= 4.5:1 against BOTH --surface and
+       its own *-ink.
+     - --action-soft is only ever text on a surface, never a fill. On a light
+       theme that makes it darker than --action, not lighter.
    --------------------------------------------------------------------------- */
 
 :root {
   color-scheme: dark;
   --bg:          #05070D;
+  --bg-rgb:      5, 7, 13;
   --surface:     #111527;
+  --surface-rgb: 17, 21, 39;
   --raised:      #1B2036;
   --field:       #0C1020;
   --ink:         #FFFFFF;
@@ -26,8 +40,130 @@
   --action-ink:  #FFFFFF;
   --tab-bg:      #151A2C;
   --tab-on:      #2E3280;
+
+  --hero-1:      #4A3CC2;
+  --hero-2:      #2F6FA0;
+  --hero-3:      #3A9D6E;
+  --tag-bg:          #262B3F;
+  --tag-transfer-bg: #262A66;
+  --ico-pos-bg:     #1F2B12;
+  --ico-pos-line:   #3B4D22;
+  --ico-neg-bg:     #331818;
+  --ico-neg-line:   #5A2A26;
+  --ico-track-bg:   #1C2046;
+  --ico-track-line: #33397A;
+  --scrim:        rgba(0, 0, 0, 0.6);
+  --shadow-fab:   0 8px 22px rgba(0, 0, 0, 0.45);
+  --shadow-toast: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --spin-track:   rgba(255, 255, 255, 0.35);
+  --chart-1: #5558F0;
+  --chart-2: #8BC34A;
+  --chart-3: #D9AE3A;
+  --chart-4: #B83B3B;
+  --chart-5: #4447C8;
+  --chart-6: #7C83F5;
+
   --tabbar:      72px;
   --topbar:      66px;
+}
+
+/* Papel: daylight. Bone paper, brown-black ink, indigo for anything tappable. */
+:root[data-theme="papel"] {
+  color-scheme: light;
+  --bg:          #F7F4EE;
+  --bg-rgb:      247, 244, 238;
+  --surface:     #FFFFFF;
+  --surface-rgb: 255, 255, 255;
+  --raised:      #EFE9DF;
+  --field:       #FBF9F5;
+  --ink:         #1E1B16;
+  --ink-soft:    #5C554A;
+  --ink-faint:   #8B8275;
+  --rule:        #E6DFD3;
+  --rule-firm:   #D8CFC0;
+  --pos:         #3E7B3A;
+  --pos-ink:     #FFFFFF;
+  --warn:        #9A6B00;
+  --warn-ink:    #FFFFFF;
+  --neg:         #C0453C;
+  --neg-ink:     #FFFFFF;
+  --action:      #4B4AD6;
+  --action-soft: #3F3EBE;
+  --action-ink:  #FFFFFF;
+  --tab-bg:      #FFFFFF;
+  --tab-on:      #DCDBF8;
+
+  /* Pastel on purpose: the Home title is dark ink and sits right on top of it. */
+  --hero-1:      #ADA6F2;
+  --hero-2:      #93C7E6;
+  --hero-3:      #A7DEC6;
+  --tag-bg:          #EFE9DF;
+  --tag-transfer-bg: #E4E3FB;
+  --ico-pos-bg:     #E9F2E4;
+  --ico-pos-line:   #C3DCB8;
+  --ico-neg-bg:     #FBE9E7;
+  --ico-neg-line:   #F0C4BE;
+  --ico-track-bg:   #E7E7FB;
+  --ico-track-line: #C5C4F0;
+  --scrim:        rgba(28, 24, 18, 0.35);
+  --shadow-fab:   0 8px 22px rgba(60, 50, 35, 0.18);
+  --shadow-toast: 0 6px 20px rgba(60, 50, 35, 0.2);
+  --spin-track:   rgba(0, 0, 0, 0.18);
+  --chart-1: #4B4AD6;
+  --chart-2: #3E7B3A;
+  --chart-3: #B07400;
+  --chart-4: #B83B3B;
+  --chart-5: #2E7FA8;
+  --chart-6: #8A6BC8;
+}
+
+/* Bosque: night, but warm. Forest greens, and gold everywhere indigo used to be. */
+:root[data-theme="bosque"] {
+  color-scheme: dark;
+  --bg:          #0B120E;
+  --bg-rgb:      11, 18, 14;
+  --surface:     #14201A;
+  --surface-rgb: 20, 32, 26;
+  --raised:      #1E2E25;
+  --field:       #0F1913;
+  --ink:         #F2EFE6;
+  --ink-soft:    #B7C4B7;
+  --ink-faint:   #7F8E80;
+  --rule:        #23342A;
+  --rule-firm:   #31463A;
+  --pos:         #6FBF73;
+  --pos-ink:     #0B1F10;
+  --warn:        #E3B23C;
+  --warn-ink:    #2E2205;
+  --neg:         #E07A6B;
+  --neg-ink:     #2A0F0B;
+  --action:      #C9A227;
+  --action-soft: #E6C158;
+  --action-ink:  #17200F;
+  --tab-bg:      #16241C;
+  --tab-on:      #3A3116;
+
+  --hero-1:      #17493A;
+  --hero-2:      #2E7C5A;
+  --hero-3:      #C9A227;
+  --tag-bg:          #223028;
+  --tag-transfer-bg: #2C3A22;
+  --ico-pos-bg:     #16301C;
+  --ico-pos-line:   #2C5230;
+  --ico-neg-bg:     #33201C;
+  --ico-neg-line:   #5C3A31;
+  --ico-track-bg:   #2B2A16;
+  --ico-track-line: #4F4A22;
+  --scrim:        rgba(0, 0, 0, 0.6);
+  --shadow-fab:   0 8px 22px rgba(0, 0, 0, 0.5);
+  --shadow-toast: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --spin-track:   rgba(255, 255, 255, 0.35);
+  --chart-1: #C9A227;
+  --chart-2: #6FBF73;
+  --chart-3: #E07A6B;
+  --chart-4: #7FB0D4;
+  --chart-5: #B79BD9;
+  --chart-6: #9C8F3F;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -48,8 +184,8 @@ body { padding-bottom: calc(var(--tabbar) + 82px + env(safe-area-inset-bottom));
 /* Home paints its gradient behind the title and fades into the page. */
 body.tab-home {
   background-image:
-    linear-gradient(180deg, rgba(5, 7, 13, 0) 0, rgba(5, 7, 13, 0.6) 380px, var(--bg) 660px),
-    linear-gradient(115deg, #4A3CC2 0%, #2F6FA0 50%, #3A9D6E 100%);
+    linear-gradient(180deg, rgba(var(--bg-rgb), 0) 0, rgba(var(--bg-rgb), 0.6) 380px, var(--bg) 660px),
+    linear-gradient(115deg, var(--hero-1) 0%, var(--hero-2) 50%, var(--hero-3) 100%);
   background-size: 100% 660px;
   background-repeat: no-repeat;
 }
@@ -407,14 +543,14 @@ svg.i.fill { fill: currentColor; stroke: none; }
   gap: 8px;
   padding: 6px 14px;
   border-radius: 10px;
-  background: #262B3F;
+  background: var(--tag-bg);
   font-size: 14px;
   white-space: nowrap;
   max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tag.transfer { background: #262A66; }
+.tag.transfer { background: var(--tag-transfer-bg); }
 .tag.transfer svg.i { width: 17px; height: 17px; color: var(--action-soft); }
 
 /* --- accounts ------------------------------------------------------------ */
@@ -447,13 +583,13 @@ svg.i.fill { fill: currentColor; stroke: none; }
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #1F2B12;
-  border: 1px solid #3B4D22;
+  background: var(--ico-pos-bg);
+  border: 1px solid var(--ico-pos-line);
   color: var(--pos);
 }
 .acct-ico svg.i { width: 20px; height: 20px; }
-.acct-ico.credit { background: #331818; border-color: #5A2A26; color: var(--neg); }
-.acct-ico.tracking { background: #1C2046; border-color: #33397A; color: var(--action-soft); }
+.acct-ico.credit { background: var(--ico-neg-bg); border-color: var(--ico-neg-line); color: var(--neg); }
+.acct-ico.tracking { background: var(--ico-track-bg); border-color: var(--ico-track-line); color: var(--action-soft); }
 .acct .bal { font-size: 15px; font-weight: 700; color: var(--ink-faint); white-space: nowrap; }
 .acct .bal.neg { color: var(--neg); }
 .acct .bal.pos { color: var(--pos); }
@@ -585,7 +721,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
   color: var(--action-ink);
   font-size: 15px;
   font-weight: 700;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-fab);
   z-index: 41;
 }
 .fab svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 2.6; fill: none; stroke-linecap: round; }
@@ -598,7 +734,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
 
 .scrim {
   position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   z-index: 50;
   display: none;
 }
@@ -647,7 +783,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
   width: 14px; height: 14px;
   margin-right: 9px;
   vertical-align: -2px;
-  border: 2px solid rgba(255, 255, 255, 0.35);
+  border: 2px solid var(--spin-track);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
@@ -857,8 +993,9 @@ svg.i.fill { fill: currentColor; stroke: none; }
   bottom: 0;
   margin-top: 2px;
   padding: 10px 0 calc(4px + env(safe-area-inset-bottom));
-  /* --surface, faded out: a gradient cannot interpolate from a hex custom property. */
-  background: linear-gradient(to top, #111527 64%, rgba(17, 21, 39, 0));
+  /* --surface, faded out: a gradient cannot interpolate from a hex custom property,
+     which is what --surface-rgb is for. */
+  background: linear-gradient(to top, rgba(var(--surface-rgb), 1) 64%, rgba(var(--surface-rgb), 0));
 }
 .sheet-foot .btn { margin-top: 0; }
 
@@ -970,6 +1107,44 @@ svg.i.fill { fill: currentColor; stroke: none; }
 .pick input { width: 20px; height: 20px; margin: 0; accent-color: var(--action); }
 .pick .sub { margin: 0; font-size: 12px; }
 
+/* --- theme picker -------------------------------------------------------- */
+
+.theme-grid { display: grid; gap: 10px; margin-bottom: 6px; }
+
+.theme-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--rule-firm);
+  border-radius: 18px;
+  background: var(--field);
+  text-align: left;
+}
+.theme-card.on { border-color: var(--action); box-shadow: inset 0 0 0 1px var(--action); }
+.theme-card:active { transform: scale(0.99); }
+.theme-card .label { flex: 1; min-width: 0; }
+.theme-card .label b { display: block; font-size: 15px; font-weight: 700; }
+.theme-card .label span { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-faint); }
+.theme-card .tick { flex: none; width: 22px; color: var(--action-soft); }
+.theme-card .tick svg.i { width: 20px; height: 20px; stroke-width: 2.8; display: block; }
+
+/* The swatch previews the palette it switches to, so it cannot use the tokens. */
+.theme-swatch {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, 17px);
+  grid-auto-rows: 17px;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--rule-firm);
+}
+.theme-swatch i { display: block; border-radius: 4px; }
+
+.theme-hint { margin: 12px 2px 0; font-size: 12px; color: var(--ink-faint); }
+
 /* --- utility ------------------------------------------------------------- */
 
 .empty {
@@ -996,7 +1171,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
   pointer-events: none;
   transition: opacity 0.18s, transform 0.18s;
   max-width: calc(100vw - 32px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-toast);
 }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .toast.bad { background: var(--neg); color: var(--neg-ink); }
