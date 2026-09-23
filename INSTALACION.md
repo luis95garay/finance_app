@@ -157,6 +157,11 @@ Las reglas que gobiernan todos los números, para que nada te sorprenda:
   Home: verde con lo que falta asignar, o rojo si asignaste más de lo que tenés. En cero no se
   muestra nada, porque cada dólar ya tiene un trabajo.
 
+- **El banner se toca para cuadrar.** Abre *Move money* con *Ready to Assign* de un lado y el
+  monto ya cargado: elegí de qué sobre sacarlo (si asignaste de más) o a cuál mandarlo (si te
+  sobra) y listo. Esto es lo que usás, por ejemplo, después de corregir el saldo real de una
+  cuenta con *Adjust balance* y quedar en rojo.
+
 - **Gastar con tarjeta de crédito mueve dinero dos veces.** Si gastás $20 de Transportation con
   la tarjeta X, se descuentan $20 de Transportation **y** se apartan $20 en la categoría
   *Payment: X*, que es la plata reservada para pagar esa tarjeta. Cuando pagás la tarjeta
@@ -167,7 +172,7 @@ Las reglas que gobiernan todos los números, para que nada te sorprenda:
   con tarjeta no se reserva para el pago — es deuda que quedó descubierta y se ve.
 
 - **Mover presupuesto entre sobres** no crea ningún movimiento: tocá una categoría en Plan y
-  usá *Move money*.
+  usá *Move money*. El otro lado del movimiento puede ser otro sobre o *Ready to Assign*.
 
 - **Las cuentas `tracking` quedan fuera del presupuesto.** Suman al patrimonio y nada más.
 

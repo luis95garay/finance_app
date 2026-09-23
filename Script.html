@@ -267,15 +267,32 @@ function renderTopbar() {
                  '<div class="topbar-actions">' + actions + '</div>';
 }
 
-/** Ready to Assign only earns space on screen when there is something to act on. */
+/**
+ * Ready to Assign only earns space on screen when there is something to act on —
+ * which is exactly when it should be tappable, so the banner doubles as the way
+ * into Move money with Ready to Assign on one side.
+ */
 function renderRtaBanner() {
   var el = document.getElementById('rtaBanner');
   var rta = S.readyToAssign;
   el.hidden = Math.abs(rta) < 0.005 || (TAB !== 'plan' && TAB !== 'home');
   if (el.hidden) return;
-  el.className = 'rta-banner' + (rta < 0 ? ' over' : '');
+  var over = rta < 0;
+  el.className = 'rta-banner' + (over ? ' over' : '');
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-label', over
+    ? 'Assigned ' + money(-rta) + ' more than you have. Move money to fix it.'
+    : money(rta) + ' ready to assign. Move money to put it in an envelope.');
+  el.onclick = function () { openMoveMoney('RTA'); };
+  el.onkeydown = function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMoveMoney('RTA'); }
+  };
   el.innerHTML = '<span class="amount num">' + money(rta) + '</span>' +
-    '<span class="caption">' + (rta < 0 ? 'Assigned more than you have' : 'Ready to Assign') + '</span>';
+    '<span class="caption">' + (over ? 'Assigned more than you have' : 'Ready to Assign') +
+      '<span class="hint">' + (over ? 'Tap to fix' : 'Tap to assign') + '</span>' +
+    '</span>' +
+    '<span class="rta-caret">' + ICON.right + '</span>';
 }
 
 function setTab(t) { TAB = t; window.scrollTo(0, 0); render(); }
@@ -916,12 +933,14 @@ function categoryInfo(id) {
   if (!id) return null;
   if (id === 'RTA') {
     var rta = S.readyToAssign;
-    return { id: 'RTA', name: 'Ready to assign', available: rta,
+    return { id: 'RTA', name: 'Ready to assign', groupName: 'Inflow', type: 'rta',
+             available: rta,
              tone: rta < -0.004 ? 'neg' : (rta > 0.005 ? 'pos' : '') };
   }
   var c = categoryById(id);
   if (!c) return null;
-  return { id: c.id, name: c.name, available: c.available, tone: pillTone(c) };
+  return { id: c.id, name: c.name, groupName: c.groupName, type: c.type,
+           available: c.available, tone: pillTone(c) };
 }
 
 // --- picking the type and the envelope --------------------------------------
@@ -1176,31 +1195,55 @@ function removeTxn(txnId) {
 
 // --- move money between envelopes -------------------------------------------
 
+/**
+ * The one screen for rebalancing. `categoryId` is the side that stays put; the
+ * other side is picked from the list. Either side can be Ready to Assign, which
+ * is what makes an over-assigned month fixable: pull the shortfall back out of
+ * an envelope and Ready to Assign returns to zero.
+ */
 function openMoveMoney(categoryId) {
-  var c = categoryById(categoryId);
+  var c = categoryInfo(categoryId);
   if (!c) return;
-  var others = budgetableCategories().filter(function (x) { return x.id !== categoryId; });
+  var isRta = categoryId === 'RTA';
+  var raw = categoryById(categoryId);     // null for RTA; only hide/delete needs it
+
+  var others = budgetableCategories().filter(function (x) { return x.id !== categoryId; })
+                                     .map(function (x) { return categoryInfo(x.id); });
+  if (!isRta) others.unshift(categoryInfo('RTA'));
   if (!others.length) { toast('You need a second category to move money', true); return; }
 
+  // Over-assigned, or money still sitting idle: open pointing the right way with
+  // the exact amount that squares the month already filled in. Envelope-to-envelope
+  // moves keep their old default of "into this one".
+  var gap = isRta ? S.readyToAssign : 0;
+  var over = gap < -0.004;                // Ready to Assign is short: money must come back in
+  var into = isRta ? over : true;
+  var preset = Math.abs(gap) < 0.005 ? '' : Math.abs(gap).toFixed(2);
+
   openModal('Move money',
-    '<p class="split-foot" style="border-radius:9px;margin-bottom:16px">' +
-      esc(c.name) + ' has <b class="num">' + money(c.available) + '</b> available.</p>' +
-    field('Amount', '<div class="amount-field"><input id="mvAmount" inputmode="decimal" placeholder="0.00"></div>') +
+    '<p class="note-box">' +
+      (over
+        ? 'You have assigned <b class="num">' + money(-gap) + '</b> more than you have. ' +
+          'Take it back out of an envelope to square the month.'
+        : esc(c.name) + ' has <b class="num">' + money(c.available) + '</b> available.') +
+      '</p>' +
+    field('Amount', '<div class="amount-field"><input id="mvAmount" inputmode="decimal" ' +
+      'placeholder="0.00" value="' + preset + '"></div>') +
     field('Direction',
       '<select id="mvDir">' +
-        '<option value="in">Move into ' + esc(c.name) + '</option>' +
-        '<option value="out">Move out of ' + esc(c.name) + '</option>' +
+        '<option value="in"' + (into ? ' selected' : '') + '>Move into ' + esc(c.name) + '</option>' +
+        '<option value="out"' + (into ? '' : ' selected') + '>Move out of ' + esc(c.name) + '</option>' +
       '</select>') +
-    field('Other category',
+    field(isRta ? 'Envelope' : 'Other category',
       '<select id="mvOther">' + others.map(function (x) {
         return '<option value="' + x.id + '">' + esc(x.groupName) + ' &middot; ' + esc(x.name) +
                ' (' + money(x.available) + ')</option>';
       }).join('') + '</select>') +
     '<button class="btn" onclick="submitMove(\'' + categoryId + '\')">Move it</button>' +
-    (c.type === 'normal'
+    (raw && raw.type === 'normal'
       ? '<div class="inline-actions">' +
           '<button class="btn ghost" onclick="submitHideCategory(\'' + categoryId + '\', ' +
-            (!c.hidden) + ')">' + (c.hidden ? 'Bring it back' : 'Hide category') + '</button>' +
+            (!raw.hidden) + ')">' + (raw.hidden ? 'Bring it back' : 'Hide category') + '</button>' +
           '<button class="btn danger" onclick="submitDeleteCategory(\'' + categoryId + '\')">' +
             'Delete</button>' +
         '</div>'

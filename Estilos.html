@@ -121,17 +121,30 @@ svg.i.fill { fill: currentColor; stroke: none; }
 .rta-banner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin: 4px 16px 14px;
   padding: 12px 20px;
   border-radius: 18px;
   background: var(--pos);
   color: var(--pos-ink);
+  cursor: pointer;
+  user-select: none;
 }
 .rta-banner.over { background: var(--neg); color: var(--neg-ink); }
-.rta-banner .amount { font-size: 19px; font-weight: 800; }
-.rta-banner .caption { font-size: 13px; font-weight: 600; }
+.rta-banner:active { transform: scale(0.99); }
+.rta-banner .amount { font-size: 19px; font-weight: 800; margin-right: auto; }
+.rta-banner .caption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+}
+.rta-banner .caption .hint { font-size: 11px; font-weight: 700; opacity: 0.72; }
+.rta-banner .rta-caret { display: flex; flex: none; margin-left: -4px; opacity: 0.7; }
+.rta-banner .rta-caret svg.i { width: 18px; height: 18px; stroke-width: 2.6; display: block; }
 
 /* --- cards (Home, Accounts, Reflect) ------------------------------------- */
 
@@ -698,6 +711,20 @@ svg.i.fill { fill: currentColor; stroke: none; }
 }
 .split-foot .add { color: var(--action-soft); font-weight: 600; }
 .split-foot .sum { color: var(--ink-soft); }
+
+/* A sentence of explanation at the top of a sheet. Same look as .split-foot,
+   but it holds prose, so it must not become a flex row. */
+.note-box {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--raised);
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+.note-box b { color: var(--ink); }
 
 .check {
   display: flex;

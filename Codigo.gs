@@ -810,16 +810,23 @@ function assignedFor_(month, categoryId) {
   return b ? Number(b.assigned) || 0 : 0;
 }
 
-/** Move budget between envelopes — the day-to-day "I overspent on fun" fix. */
+/** Move budget between envelopes — the day-to-day "I overspent on fun" fix.
+ *  Either side may be RTA. Ready to Assign owns no Budgets row: it is whatever is
+ *  left after assignments, so moving money to or from it is nothing more than the
+ *  other side's assignment going down or up. */
 function moveBudget(payload) {
   return withLock_(function () {
     var amt = round2_(payload.amount);
     if (amt <= 0) throw new Error('Enter an amount greater than zero.');
     if (payload.fromCategoryId === payload.toCategoryId) throw new Error('Pick two different categories.');
-    setAssigned_(payload.month, payload.fromCategoryId,
-                 round2_(assignedFor_(payload.month, payload.fromCategoryId) - amt));
-    setAssigned_(payload.month, payload.toCategoryId,
-                 round2_(assignedFor_(payload.month, payload.toCategoryId) + amt));
+    if (payload.fromCategoryId !== RTA) {
+      setAssigned_(payload.month, payload.fromCategoryId,
+                   round2_(assignedFor_(payload.month, payload.fromCategoryId) - amt));
+    }
+    if (payload.toCategoryId !== RTA) {
+      setAssigned_(payload.month, payload.toCategoryId,
+                   round2_(assignedFor_(payload.month, payload.toCategoryId) + amt));
+    }
     invalidateSnapshotsFrom_(payload.month);
     return getState(payload.month);
   });
@@ -1522,6 +1529,15 @@ function selfTest() {
             { month: '2026-01', categoryId: 'fun', assigned: 400 }];
   eq('ready to assign after budgeting',
      computeMonth_('2026-01', null, cats, b7, t7, accounts).readyToAssign, 2500);
+
+  // 7b. Ready to Assign is whatever assignments leave behind, which is why
+  // moveBudget() can treat RTA as a side of a move by simply not writing it:
+  // taking 60 off an envelope hands exactly 60 back to Ready to Assign.
+  var b7b = [{ month: '2026-01', categoryId: 'trans', assigned: 40 },
+             { month: '2026-01', categoryId: 'fun', assigned: 400 }];
+  var m7b = computeMonth_('2026-01', null, cats, b7b, t7, accounts);
+  eq('moving 60 out of an envelope returns it to ready to assign', m7b.readyToAssign, 2560);
+  eq('and the envelope keeps only what is left', index(m7b).trans.assigned, 40);
 
   // 8. A day-30 rule survives February.
   eq('february clamps day 30', Math.min(30, daysInMonth_('2026-02')), 28);
