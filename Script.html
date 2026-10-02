@@ -825,9 +825,13 @@ function txnForm() {
 
   if (d.type === 'transfer') {
     html += '<div class="rows">' +
-      rowSelect('From', 'fAccount', 'swap', accountOptions(d.accountId)) +
-      rowSelect('To', 'fToAccount', 'swap', accountOptions(d.toAccountId)) +
+      rowSelect('From', 'fAccount', 'swap', accountOptions(d.accountId), 'onTransferAccountChange()') +
+      rowSelect('To', 'fToAccount', 'swap', accountOptions(d.toAccountId), 'onTransferAccountChange()') +
       rowDate() + '</div>';
+    if (transferNeedsCategory()) {
+      html += '<div class="rows">' + catRow(0, 'Category', false) +
+        '<small class="row-hint">Money moving into a tracking account counts as spent from this category.</small></div>';
+    }
   } else {
     html += '<div class="rows">' + categoryRows() + '</div>' +
       '<div class="rows">' + rowSelect('Account', 'fAccount', 'card', accountOptions(d.accountId)) +
@@ -890,11 +894,23 @@ function setHeroAmount(v) {
   else if (DRAFT.splits[0]) DRAFT.splits[0].amount = v;
 }
 
-function rowSelect(label, id, icon, options) {
+function rowSelect(label, id, icon, options, onchange) {
   return '<label class="row-item">' + ICON[icon] +
     '<span class="row-main"><span class="row-label">' + esc(label) + '</span>' +
-    '<select class="row-control" id="' + id + '">' + options + '</select></span>' +
+    '<select class="row-control" id="' + id + '"' +
+      (onchange ? ' onchange="' + onchange + '"' : '') + '>' + options + '</select></span>' +
     '<span class="row-caret">' + ICON.down + '</span></label>';
+}
+
+/** A cash/credit account buying into a tracking one must charge a category. */
+function transferNeedsCategory() {
+  var from = accountById(DRAFT.accountId), to = accountById(DRAFT.toAccountId);
+  return !!to && to.type === 'tracking' && (!from || from.type !== 'tracking');
+}
+
+function onTransferAccountChange() {
+  readForm();
+  repaintTxn();
 }
 
 function rowDate() {

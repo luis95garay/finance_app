@@ -911,8 +911,22 @@ function buildTxnRows_(payload) {
     if (!amt) throw new Error('Enter an amount.');
     if (!payload.accountId || !payload.toAccountId) throw new Error('Pick both accounts.');
     if (payload.accountId === payload.toAccountId) throw new Error('Pick two different accounts.');
+
+    // Money moving into a tracking account (investments/assets) leaves the
+    // budget for good, so it must be charged to a category like any other
+    // spend — unless it's already coming from another tracking account.
+    var acctType = {};
+    readSheet_('Accounts').forEach(function (a) { acctType[a.id] = a.type; });
+    var intoTracking = acctType[payload.toAccountId] === 'tracking' &&
+                        acctType[payload.accountId] !== 'tracking';
+    var transferCategoryId = (payload.splits && payload.splits[0] && payload.splits[0].categoryId) || '';
+    if (intoTracking && !transferCategoryId) {
+      throw new Error('Pick a category for this transfer — it counts as spent.');
+    }
+
     return [assign_({}, base, { line: 1, accountId: payload.accountId,
-                                toAccountId: payload.toAccountId, categoryId: '', amount: -amt })];
+                                toAccountId: payload.toAccountId,
+                                categoryId: intoTracking ? transferCategoryId : '', amount: -amt })];
   }
 
   var splits = (payload.splits || []).filter(function (s) { return round2_(s.amount) !== 0; });
@@ -959,12 +973,15 @@ function setCleared(payload) {
 
 function saveRecurringFrom_(payload) {
   var day = Number(payload.repeat.dayOfMonth) || Number(String(payload.date).slice(8, 10));
-  var splits = payload.type === 'transfer' ? [] :
+  var total = payload.type === 'transfer' ? round2_(Math.abs(payload.amount)) :
+    (payload.splits || []).reduce(function (a, s) { return round2_(a + Math.abs(s.amount)); }, 0);
+  var transferCategoryId = payload.type === 'transfer' && payload.splits && payload.splits[0] ?
+    payload.splits[0].categoryId : '';
+  var splits = payload.type === 'transfer' ?
+    (transferCategoryId ? [{ categoryId: transferCategoryId, amount: total }] : []) :
     (payload.splits || []).map(function (s) {
       return { categoryId: s.categoryId, amount: round2_(Math.abs(s.amount)) };
     });
-  var total = payload.type === 'transfer' ? round2_(Math.abs(payload.amount)) :
-    splits.reduce(function (a, s) { return round2_(a + s.amount); }, 0);
 
   appendRows_('Recurring', [{
     id: uid_(), type: payload.type, dayOfMonth: Math.min(31, Math.max(1, day)),
@@ -1531,6 +1548,15 @@ function selfTest() {
   by = index(computeMonth_('2026-01', null, cats, [], t6, accounts));
   eq('tracking spending ignored by the budget', by.fun.available, 0);
   eq('but it moves net worth', computeBalances_(accounts, t6).inv.working, -500);
+
+  // 7. Buying into a tracking account with a category charges that category,
+  //    same as a direct expense would.
+  var b7 = [{ month: '2026-01', categoryId: 'fun', assigned: 200 }];
+  var t7 = [tx({ date: '2026-01-12', type: 'transfer', accountId: 'cash', toAccountId: 'inv',
+                 categoryId: 'fun', amount: -150 })];
+  by = index(computeMonth_('2026-01', null, cats, b7, t7, accounts));
+  eq('category charged for money moved into tracking', by.fun.available, 50);
+  eq('tracking account balance grows', computeBalances_(accounts, t7).inv.working, 150);
 
   // A future-dated paycheck is scheduled, not money in the account yet.
   var t6b = [{ accountId: 'cash', type: 'income', amount: 3800, date: '2026-02-03', cleared: false }];
