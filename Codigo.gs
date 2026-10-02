@@ -247,11 +247,14 @@ function computeBalances_(accounts, txns, today) {
  *  - negative available in a cash category does not roll; it comes out of next
  *    month's Ready to Assign. Negative in a payment envelope does roll — that
  *    is real uncovered debt.
+ *  - rows dated after `today` are ignored: money that has not arrived cannot
+ *    fund an envelope. Without `today`, every row in the month counts — that is
+ *    how the YNAB import reconstructs history, which is fact, not a forecast.
  *
  * @param prev {carry: {catId: number}, rtaCarry: number}
  * @return {rows, carry, rtaCarry, readyToAssign, income, assignedTotal}
  */
-function computeMonth_(month, prev, categories, budgets, txns, accounts) {
+function computeMonth_(month, prev, categories, budgets, txns, accounts, today) {
   var isCredit = {}, isTracking = {};
   accounts.forEach(function (a) {
     if (a.type === 'credit') isCredit[a.id] = true;
@@ -275,6 +278,10 @@ function computeMonth_(month, prev, categories, budgets, txns, accounts) {
 
   txns.forEach(function (t) {
     if (t.month !== month) return;
+    // Same horizon computeBalances_ uses, so a scheduled paycheck shows up as
+    // `upcoming` on the account and as nothing at all in the budget until its
+    // day comes round. One guard covers every budget effect below.
+    if (today && String(t.date) > today) return;
     var amt = Number(t.amount) || 0;
     var onCard = !!isCredit[t.accountId];
 
@@ -431,9 +438,14 @@ function stateUpTo_(month) {
       budgets = readSheet_('Budgets'), txns = readSheet_('Transactions');
   var prev = snapshotFor_(addMonths_(start, -1)) || { carry: {}, rtaCarry: 0 };
 
+  var nowMonth = todayStr_().slice(0, 7);
   for (var m = start; m < month; m = addMonths_(m, 1)) {
-    var st = computeMonth_(m, prev, cats, budgets, txns, accounts);
-    writeSnapshot_(m, st);
+    var st = computeMonth_(m, prev, cats, budgets, txns, accounts, todayStr_());
+    // Only a month that has fully elapsed has a stable carryover: it can hold no
+    // future-dated rows. Caching the current month would freeze it mid-month and
+    // nothing would invalidate it as the days pass. It gets cached next month,
+    // when stateUpTo_ walks past it again and every date in it is history.
+    if (m < nowMonth) writeSnapshot_(m, st);
     prev = { carry: st.carry, rtaCarry: st.rtaCarry };
   }
   return prev;
@@ -465,7 +477,7 @@ function getState(month) {
       txns = readSheet_('Transactions');
 
   var prev = stateUpTo_(month);
-  var mstate = computeMonth_(month, prev, cats, budgets, txns, accounts);
+  var mstate = computeMonth_(month, prev, cats, budgets, txns, accounts, todayStr_());
   var balances = computeBalances_(accounts, txns, todayStr_());
 
   var byCat = {};
@@ -1066,13 +1078,10 @@ function runScheduledTransactions() {
         recurringId: r.id, cleared: false
       }));
 
-      if (r.type === 'income') {
-        splits.forEach(function (s) {
-          if (!s.categoryId || s.categoryId === RTA) return;
-          setAssigned_(month, s.categoryId,
-                       round2_(assignedFor_(month, s.categoryId) + Math.abs(s.amount)));
-        });
-      }
+      // Deliberately no setAssigned_ here. The rows just written carry a real
+      // categoryId with a positive sign, so the money already lands in each
+      // envelope as activity; assigning it on top would fund a $500 paycheck
+      // twice, since available = carryover + assigned + activity.
       sheet_('Recurring').getRange(r._row, SCHEMA.Recurring.indexOf('lastRunMonth') + 1)
                          .setValue(month);
       delete _cache.Recurring;
@@ -1372,6 +1381,9 @@ function runImport_(register, planRows, accountMap) {
       allTxns = readSheet_('Transactions');
 
   monthList.forEach(function (mth) {
+    // No `today` on purpose: an imported month is history, and YNAB's Plan export
+    // counts a future-dated paycheck in the month it belongs to. Passing today
+    // here would silently stop the reconstruction matching the export.
     var st = computeMonth_(mth, prevState, allCats, budgets, allTxns, allAccts);
     var carry = {};
     cats.forEach(function (c) {
@@ -1584,6 +1596,36 @@ function selfTest() {
   // 8. A day-30 rule survives February.
   eq('february clamps day 30', Math.min(30, daysInMonth_('2026-02')), 28);
   eq('january keeps day 30', Math.min(30, daysInMonth_('2026-01')), 30);
+
+  // 9. The budget waits for the day, exactly like the account balance does:
+  //    a paycheck dated the 3rd funds nothing on the 1st.
+  var t9 = [tx({ date: '2026-01-03', type: 'income', accountId: 'cash',
+                 categoryId: 'fun', amount: 500 })];
+  eq('future paycheck does not fund the envelope yet',
+     index(computeMonth_('2026-01', null, cats, [], t9, accounts, '2026-01-01')).fun.available, 0);
+  eq('and it funds it once its day arrives',
+     index(computeMonth_('2026-01', null, cats, [], t9, accounts, '2026-01-03')).fun.available, 500);
+  eq('with no today, every row counts (the import relies on this)',
+     index(computeMonth_('2026-01', null, cats, [], t9, accounts)).fun.available, 500);
+  var t9b = [tx({ date: '2026-01-20', type: 'income', accountId: 'cash',
+                  categoryId: RTA, amount: 900 })];
+  eq('future income stays out of ready to assign too',
+     computeMonth_('2026-01', null, cats, [], t9b, accounts, '2026-01-05').readyToAssign, 0);
+  eq('a future card purchase reserves nothing in the payment envelope',
+     index(computeMonth_('2026-01', null, cats, [],
+       [tx({ date: '2026-01-28', type: 'expense', accountId: 'card',
+             categoryId: 'trans', amount: -20 })],
+       accounts, '2026-01-05')).paycard.available, 0);
+
+  // 10. A recurring income's splits land as activity, never as assignments:
+  //     runScheduledTransactions must not also call setAssigned_, or a $500
+  //     paycheck would leave $1000 in the envelope.
+  eq('income to a category funds it on its own',
+     index(computeMonth_('2026-01', null, cats, [], t9, accounts, '2026-01-03')).fun.available, 500);
+  eq('assigning it again on top would double it',
+     index(computeMonth_('2026-01', null, cats,
+       [{ month: '2026-01', categoryId: 'fun', assigned: 500 }], t9, accounts,
+       '2026-01-03')).fun.available, 1000);
 
   var msg = out.join('\n') + '\n\n' + pass + ' passed, ' + fail + ' failed.';
   Logger.log(msg);
