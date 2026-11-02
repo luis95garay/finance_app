@@ -43,8 +43,10 @@ the top of `Codigo.gs`. Key design choices that aren't obvious from a quick read
   can't be created, hidden, or deleted directly by the user — it's managed alongside its account.
 - **`Snapshots` holds locked vs. computed carryover**. Rows imported from a YNAB export are
   marked `locked: true` and are never recalculated — they're treated as ground truth. Only
-  months after the import cutoff get computed and cached by `stateUpTo_()` /
-  `invalidateSnapshotsFrom_()`. Don't remove the `locked` flag check when touching snapshot code;
+  months that had already ended at import time get locked; the month still running does not,
+  because its `Available` is true only on the import day and locking it would drop everything
+  spent afterwards from the next month's carryover. That month and later ones get computed and
+  cached by `stateUpTo_()` / `invalidateSnapshotsFrom_()`. Don't remove the `locked` flag check when touching snapshot code;
   doing so would let the engine overwrite historically-accurate imported data with its own
   (necessarily imperfect) reconstruction.
 - **`RTA`** (the string constant, not a sheet) is a pseudo-category id representing "Ready to
@@ -71,6 +73,21 @@ Rules encoded there, in priority order:
 4. Transfers only touch the budget when they settle a credit card (debit → credit) or when a
    leg carries an explicit category (e.g., moving money into a tracking/investment account).
    Card-to-card transfers move debt around without releasing any envelope.
+5. **A row dated after `today` is ignored entirely** — scheduled, not yet earned or spent. This
+   is the same horizon `computeBalances_()` uses to split `working` from `upcoming`, and the two
+   must agree: a YNAB export carries future-dated paychecks, and counting one in the budget while
+   the account still reads zero is the bug this rule exists to prevent. `computeMonth_()` takes
+   `today` as an optional last parameter; **omit it and every row counts**, which is what
+   `runImport_()` relies on, because an imported month is historical fact that has to keep adding
+   up to the YNAB Plan export. Don't pass `today` there.
+
+   Two consequences worth knowing before touching `Snapshots`: a computed (non-`locked`) snapshot
+   is cached *and trusted* only for a month that has already ended — `stateUpTo_()` both declines
+   to write one for the current month and skips any it finds, since the current month's closing
+   carryover keeps moving as the days pass and nothing would invalidate it. And a recurring
+   `income` must **not** also call `setAssigned_`: `buildTxnRows_()` already writes one positive
+   row per split carrying the split's own `categoryId`, which *is* activity, so assigning the same
+   money on top funds every envelope twice.
 
 If you change any of this, re-run `selfTest()` (in the Apps Script editor, or headless — see
 Testing below) before touching anything else; it encodes these rules as executable assertions.
@@ -124,6 +141,9 @@ Non-obvious parts of the transform, worth knowing before touching this function:
 - `Payee` is deliberately dropped — in the real dataset it's almost entirely
   `Transfer : X` / `Starting Balance` / boilerplate, and `Memo` is the field users actually put
   content in.
+- A YNAB Plan export always ends at the month it was taken in, so the newest month in it is
+  never locked (`isClosedMonth_()`). On import day the engine computes the same `Available` for
+  that month; after that, the app's own transactions decide its close.
 - Ready to Assign has no column in the YNAB export, so the importer reconstructs it forward from
   transaction history and then shifts the whole series so the most recent imported month lands
   at exactly 0 (a budget "in good standing"). The size of that shift is reported to the user.

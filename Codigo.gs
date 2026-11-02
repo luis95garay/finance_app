@@ -30,7 +30,8 @@ var SCHEMA = {
 
 var RTA = 'RTA';                       // pseudo-category id for Ready to Assign
 var CC_GROUP = 'Credit Card Payments';
-var DEFAULTS = { currency: '$', locale: 'en-US', schemaVersion: '2', theme: 'midnight' };
+// Bumping schemaVersion triggers the one-time migration in ensureSheets_().
+var DEFAULTS = { currency: '$', locale: 'en-US', schemaVersion: '4', theme: 'midnight' };
 
 // Palettes the web app ships; see Estilos.html. An unknown value falls back to midnight.
 var THEMES = ['midnight', 'papel', 'bosque'];
@@ -98,6 +99,30 @@ function ensureSheets_() {
     var rows = Object.keys(DEFAULTS).map(function (k) { return [k, DEFAULTS[k]]; });
     sheet_('Config').getRange(2, 1, rows.length, 2).setValues(rows);
     _cache = {};
+  } else {
+    // v3 made a computed snapshot depend on today's date, so any one v2 wrote for
+    // a month that had not ended yet is wrong. stateUpTo_ ignores such a row while
+    // its month is still current, but once the month ends the row looks legitimate
+    // again and would be trusted forever — so drop the computed ones once. They
+    // rebuild on the next load; imported `locked` rows are fact and stay.
+    //
+    // v4 stopped the importer locking the month still running at import. Before
+    // that, its closing carryover was a photo of the import day: paycheck in, almost
+    // nothing spent. Every later expense then vanished on the way into the next
+    // month, which read as all the envelopes refilling on the 1st. A YNAB Plan export
+    // always ends at the month it was taken in, so the newest locked month is exactly
+    // that photo; closed months before it stay locked.
+    var ver = cfg.filter(function (r) { return r.key === 'schemaVersion'; })[0];
+    if (!ver || String(ver.value) !== DEFAULTS.schemaVersion) {
+      var newestLocked = readSheet_('Snapshots')
+        .filter(function (s) { return isTrue_(s.locked); })
+        .map(function (s) { return String(s.month); })
+        .sort().pop();
+      deleteWhere_('Snapshots', function (s) {
+        return !isTrue_(s.locked) || String(s.month) === newestLocked;
+      });
+      setConfig_('schemaVersion', DEFAULTS.schemaVersion);
+    }
   }
   var hasRta = readSheet_('Categories').some(function (c) { return c.id === RTA; });
   if (!hasRta) {
@@ -191,6 +216,9 @@ function addMonths_(month, n) {
   mth = ((mth % 12) + 12) % 12;
   return y + '-' + ('0' + (mth + 1)).slice(-2);
 }
+
+/** True once `month` has fully elapsed, so nothing can still land in it by date. */
+function isClosedMonth_(month, today) { return month < String(today).slice(0, 7); }
 
 function daysInMonth_(month) {
   return new Date(+month.slice(0, 4), +month.slice(5, 7), 0).getDate();
@@ -393,12 +421,13 @@ function computeMonth_(month, prev, categories, budgets, txns, accounts, today) 
 function snapshotFor_(month) {
   var rows = readSheet_('Snapshots').filter(function (s) { return String(s.month) === month; });
   if (!rows.length) return null;
-  var carry = {}, rtaCarry = 0;
+  var carry = {}, rtaCarry = 0, locked = false;
   rows.forEach(function (s) {
+    if (isTrue_(s.locked)) locked = true;
     if (s.categoryId === '__RTA__') rtaCarry = Number(s.carryover) || 0;
     else carry[s.categoryId] = Number(s.carryover) || 0;
   });
-  return { carry: carry, rtaCarry: rtaCarry };
+  return { carry: carry, rtaCarry: rtaCarry, locked: locked };
 }
 
 function writeSnapshot_(month, state) {
@@ -422,29 +451,45 @@ function invalidateSnapshotsFrom_(month) {
  * Returns the carryover state entering `month`, computing and storing whatever
  * snapshots are missing. In normal use that is one or two months of work,
  * because everything up to the import cutoff is locked.
+ *
+ * A computed snapshot is only cached — and only trusted — for a month that has
+ * already ended. Now that computeMonth_() ignores rows whose day has not come,
+ * the closing carryover of the current month keeps changing as the days pass,
+ * and nothing would invalidate a cached copy. Imported `locked` rows are exempt:
+ * those are fact in any month.
+ *
+ * Skipping an untrusted row, not just declining to write one, is what keeps the
+ * current month honest if an older version already cached it. It does not heal
+ * such a row, though — once its month ends it looks legitimate again — which is
+ * why ensureSheets_() clears the computed ones once on the v3 migration.
  */
 function stateUpTo_(month) {
-  var snap = snapshotFor_(addMonths_(month, -1));
+  var nowMonth = todayStr_().slice(0, 7);
+  function trusted(m) {
+    var s = snapshotFor_(m);
+    return (s && (s.locked || m < nowMonth)) ? s : null;
+  }
+
+  var snap = trusted(addMonths_(month, -1));
   if (snap) return snap;
 
   var all = readSheet_('Snapshots');
-  var known = all.map(function (s) { return String(s.month); })
+  var known = all.filter(function (s) {
+                   return isTrue_(s.locked) || String(s.month) < nowMonth;
+                 })
+                 .map(function (s) { return String(s.month); })
                  .filter(function (m) { return m < month; })
                  .sort();
   var start = known.length ? addMonths_(known[known.length - 1], 1) : earliestMonth_();
-  if (start >= month) return snapshotFor_(addMonths_(month, -1)) || { carry: {}, rtaCarry: 0 };
+  if (start >= month) return trusted(addMonths_(month, -1)) || { carry: {}, rtaCarry: 0 };
 
   var cats = readSheet_('Categories'), accounts = readSheet_('Accounts'),
       budgets = readSheet_('Budgets'), txns = readSheet_('Transactions');
-  var prev = snapshotFor_(addMonths_(start, -1)) || { carry: {}, rtaCarry: 0 };
+  var prev = trusted(addMonths_(start, -1)) || { carry: {}, rtaCarry: 0 };
 
-  var nowMonth = todayStr_().slice(0, 7);
+  var today = todayStr_();
   for (var m = start; m < month; m = addMonths_(m, 1)) {
-    var st = computeMonth_(m, prev, cats, budgets, txns, accounts, todayStr_());
-    // Only a month that has fully elapsed has a stable carryover: it can hold no
-    // future-dated rows. Caching the current month would freeze it mid-month and
-    // nothing would invalidate it as the days pass. It gets cached next month,
-    // when stateUpTo_ walks past it again and every date in it is history.
+    var st = computeMonth_(m, prev, cats, budgets, txns, accounts, today);
     if (m < nowMonth) writeSnapshot_(m, st);
     prev = { carry: st.carry, rtaCarry: st.rtaCarry };
   }
@@ -523,6 +568,14 @@ function paymentEnvOf_(cats, accountId) {
     if (cats[i].type === 'cc_payment' && cats[i].linkedAccountId === accountId) return cats[i].id;
   }
   return '';
+}
+
+/** Writes one Config key. setPinnedCategories/setTheme inline the same pattern. */
+function setConfig_(key, value) {
+  var row = readSheet_('Config').filter(function (r) { return r.key === key; })[0];
+  if (row) sheet_('Config').getRange(row._row, 2).setValue(value);
+  else appendRows_('Config', [{ key: key, value: value }]);
+  delete _cache.Config;
 }
 
 function configMap_() {
@@ -604,11 +657,14 @@ function getReflect(month) {
   });
 
   var txns = readSheet_('Transactions');
+  var today = todayStr_();
   var trend = [];
   for (var i = 5; i >= 0; i--) {
     var mm = addMonths_(month, -i), s = 0, inc = 0;
     txns.forEach(function (t) {
       if (t.month !== mm || !t.categoryId || t.type === 'transfer') return;
+      // Same horizon as the rest of this page, which comes from getState().
+      if (String(t.date) > today) return;
       var amt = Number(t.amount) || 0;
       if (t.categoryId === RTA) inc = round2_(inc + amt);
       else if (amt < 0) s = round2_(s - amt);
@@ -1354,9 +1410,8 @@ function runImport_(register, planRows, accountMap) {
   var dateCheckRate = dateCheckTotal ? dateCheckBad / dateCheckTotal : 0;
 
   // --- budgets, and the closing snapshot as imported fact ------------------
-  // YNAB's own Available column is locked in as the opening carryover, so the
-  // app's state matches the export exactly on day one and our engine only ever
-  // computes forward from there.
+  // YNAB's own Available column is locked in as the closing carryover of every
+  // month already over, and our engine only ever computes forward from there.
   var budgets = [], available = {}, months = {};
   planRows.forEach(function (r) {
     var cid = catIdByFull[String(r['Category Group/Category']).trim()];
@@ -1369,13 +1424,15 @@ function runImport_(register, planRows, accountMap) {
   });
   replaceAll_('Budgets', budgets);
 
-  // Every historical month gets a locked carryover taken straight from YNAB's
-  // Available column, so the app opens showing exactly what YNAB showed and the
-  // engine only ever computes forward from the last imported month. Ready to
-  // Assign is not in the export, so that one number we do compute — feeding
+  // Every closed month gets a locked carryover taken straight from YNAB's Available
+  // column. The month still running is deliberately left out: its Available is only
+  // true on the import day, and locking it would freeze that photo as the month's
+  // close, dropping everything spent afterwards from the next month's carryover. The
+  // engine computes that month instead, which on import day gives the same number.
+  // Ready to Assign is not in the export, so that one number we do compute — feeding
   // YNAB's carryover back in each month keeps the two from drifting apart.
   var monthList = Object.keys(months).sort();
-  var lastMonth = monthList[monthList.length - 1];
+  var lastLocked = '';
   var snaps = [], prevState = { carry: {}, rtaCarry: 0 }, lastReadyToAssign = 0;
   var allCats = readSheet_('Categories'), allAccts = readSheet_('Accounts'),
       allTxns = readSheet_('Transactions');
@@ -1385,14 +1442,16 @@ function runImport_(register, planRows, accountMap) {
     // counts a future-dated paycheck in the month it belongs to. Passing today
     // here would silently stop the reconstruction matching the export.
     var st = computeMonth_(mth, prevState, allCats, budgets, allTxns, allAccts);
+    var closed = isClosedMonth_(mth, todayStr_());
+    if (closed) lastLocked = mth;
     var carry = {};
     cats.forEach(function (c) {
       if (c.type === 'rta') return;
       var v = available[mth + '|' + c.id];
       carry[c.id] = v === undefined ? (st.carry[c.id] || 0) : v;
-      snaps.push({ month: mth, categoryId: c.id, carryover: carry[c.id], locked: true });
+      if (closed) snaps.push({ month: mth, categoryId: c.id, carryover: carry[c.id], locked: true });
     });
-    snaps.push({ month: mth, categoryId: '__RTA__', carryover: st.rtaCarry, locked: true });
+    if (closed) snaps.push({ month: mth, categoryId: '__RTA__', carryover: st.rtaCarry, locked: true });
     lastReadyToAssign = st.readyToAssign;
     prevState = { carry: carry, rtaCarry: st.rtaCarry };
   });
@@ -1432,7 +1491,7 @@ function runImport_(register, planRows, accountMap) {
   log.push('Imported ' + accounts.length + ' accounts, ' + (cats.length - 1) + ' categories, ' +
            txns.length + ' transaction lines, ' + budgets.length + ' budget entries.');
   log.push('Dropped ' + skippedTransfer + ' duplicate transfer legs.');
-  log.push('Locked ' + snaps.length + ' carryover rows through ' + lastMonth +
+  log.push('Locked ' + snaps.length + ' carryover rows through ' + (lastLocked || '(no closed month)') +
            ' — YNAB is the source of truth for everything up to that month.');
   log.push('Ready to Assign starts at 0 (the export does not include it; the ' +
            'reconstruction was off by ' + Math.abs(rtaShift).toFixed(2) + ').');
@@ -1626,6 +1685,12 @@ function selfTest() {
      index(computeMonth_('2026-01', null, cats,
        [{ month: '2026-01', categoryId: 'fun', assigned: 500 }], t9, accounts,
        '2026-01-03')).fun.available, 1000);
+
+  // 11. The importer locks only closed months. Locking the running one froze a photo
+  //     of the import day as its close, so the next month inherited a full envelope.
+  eq('a month already over can be locked', isClosedMonth_('2026-09', '2026-10-01') ? 1 : 0, 1);
+  eq('the month still running cannot', isClosedMonth_('2026-10', '2026-10-31') ? 1 : 0, 0);
+  eq('nor can a future one', isClosedMonth_('2026-11', '2026-10-01') ? 1 : 0, 0);
 
   var msg = out.join('\n') + '\n\n' + pass + ' passed, ' + fail + ' failed.';
   Logger.log(msg);

@@ -250,9 +250,16 @@ No debería: cada regla guarda el último mes en que corrió. Si pasó, borrá l
 la hoja `Transactions` y corré *Rebuild snapshots*.
 
 **Los números de un mes viejo no cuadran.**
-Todo lo anterior a la importación está bloqueado con los valores de YNAB
-(columna `locked` en la hoja `Snapshots`) y no se recalcula. Si editás una transacción vieja, el
-saldo de la cuenta cambia pero el presupuesto histórico no. Es intencional.
+Los meses que ya habían terminado al importar están bloqueados con los valores de YNAB
+(columna `locked` en la hoja `Snapshots`) y no se recalculan. Si editás una transacción de esos
+meses, el saldo de la cuenta cambia pero el presupuesto histórico no. Es intencional. El mes en
+curso al importar no se bloquea, así que lo que cargues en la app sí pasa al mes siguiente.
+
+**Al empezar el mes, las bolsitas aparecen llenas antes de que llegue el ingreso.**
+Pasaba con importaciones hechas con versiones anteriores, que bloqueaban también el mes en curso.
+Pegá el `Codigo` nuevo y publicá una versión: la app corrige la hoja sola al abrirse, una única
+vez. **No hace falta reimportar**, y reimportar borraría lo que cargaste en la app desde entonces.
+*Rebuild snapshots* no lo arregla, porque no toca las filas `locked`.
 
 ---
 
@@ -262,8 +269,8 @@ saldo de la cuenta cambia pero el presupuesto histórico no. Es intencional.
   reproduce exacto 3,451 de las 3,528 filas del export; las 77 restantes son las tres categorías
   *Credit Card Payments*, donde YNAB aplica una heurística interna de cobertura que no se puede
   deducir desde un CSV. Por eso la importación **bloquea los valores de YNAB** como saldo de
-  apertura de cada mes: el estado con el que abrís la app es exacto, y de ahí en adelante manda
-  la regla del motor, que es determinista y está documentada arriba.
+  cierre de cada mes ya terminado: el estado con el que abrís la app es exacto, y de ahí en
+  adelante manda la regla del motor, que es determinista y está documentada arriba.
 
 - **Ready to Assign arranca en cero.** El export de YNAB no incluye ese número, así que no hay
   contra qué compararlo. La importación normaliza la serie para que el mes actual quede en cero
