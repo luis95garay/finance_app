@@ -124,7 +124,7 @@ La interfaz imita la app móvil de YNAB. Abajo hay cinco pestañas y el botón
 | Pestaña | Qué muestra |
 |---|---|
 | **Home** | Tarjeta **Pinned** con tus sobres favoritos y una tarjeta plegable con el resumen del mes (ingreso, asignado, gastado). |
-| **Plan** | Los sobres por grupo, con columnas *Assigned* (editable tocando el monto) y *Available*. Tocá "Sep 2026 ⌄" para cambiar de mes. Íconos: mostrar categorías ocultas, agregar categoría y menú ⋮ (plan de ingresos, etc.). |
+| **Plan** | Los sobres por grupo, con columnas *Assigned* (editable tocando el monto) y *Available*. Tocá "Sep 2026 ⌄" para cambiar de mes. Íconos: mostrar categorías ocultas, agregar categoría y menú ⋮ (elegir mes, etc.). |
 | **Spending** | Movimientos del mes por fecha, con sección *Scheduled* para los programados. La lupa abre búsqueda y filtro por cuenta; ⋮ cambia de mes. |
 | **Accounts** | Cuentas agrupadas en Cash, Credit y Tracking, más el patrimonio. ⊕ agrega una cuenta. |
 | **Reflect** | Desglose de gasto del mes; indicadores del mes (gastado, % de los sobres usados, ingreso recibido, deuda de tarjetas); *Where it went* con cada categoría: gastado de lo disponible, % y barra; ingreso vs. gasto de los últimos seis meses; efectivo y patrimonio. |

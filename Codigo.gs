@@ -916,21 +916,6 @@ function moveBudget(payload) {
   });
 }
 
-/** Applies a recurring income template's split plan as this month's assignments. */
-function applyIncomePlan(payload) {
-  return withLock_(function () {
-    var rec = readSheet_('Recurring').filter(function (r) { return r.id === payload.recurringId; })[0];
-    if (!rec) throw new Error('Income plan not found.');
-    JSON.parse(rec.splitsJson || '[]').forEach(function (s) {
-      if (!s.categoryId || s.categoryId === RTA) return;
-      var base = payload.replace ? 0 : assignedFor_(payload.month, s.categoryId);
-      setAssigned_(payload.month, s.categoryId, round2_(base + Math.abs(s.amount)));
-    });
-    invalidateSnapshotsFrom_(payload.month);
-    return getState(payload.month);
-  });
-}
-
 function writeTxnRows_(rows) {
   appendRows_('Transactions', rows);
   var sh = sheet_('Transactions');

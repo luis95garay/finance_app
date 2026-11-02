@@ -467,11 +467,9 @@ function renderPlan() {
 }
 
 function openPlanMenu() {
-  var incomePlan = S.recurring.filter(function (r) { return r.type === 'income' && r.splits.length; })[0];
   openModal('Plan', '<div class="menu">' +
     '<button class="menu-item" onclick="openMonthPicker()">Choose month</button>' +
     '<button class="menu-item" onclick="openNewCategory()">Add category</button>' +
-    (incomePlan ? '<button class="menu-item" onclick="openIncomePlan(\'' + incomePlan.id + '\')">Assign from income plan</button>' : '') +
     '<button class="menu-item" onclick="closeModal();toggleHidden()">' +
       (SHOW_HIDDEN ? 'Hide dormant categories' : 'Show dormant categories') + '</button>' +
     '</div>');
@@ -1288,34 +1286,6 @@ function submitMove(categoryId) {
     fromCategoryId: into ? other : categoryId,
     toCategoryId: into ? categoryId : other
   }, 'Budget moved');
-}
-
-// --- income plan -------------------------------------------------------------
-
-function openIncomePlan(recurringId) {
-  var r = S.recurring.filter(function (x) { return x.id === recurringId; })[0];
-  if (!r) return;
-  var lines = r.splits.map(function (s) {
-    return '<div class="split-row"><span>' + esc(categoryName(s.categoryId)) + '</span>' +
-           '<span class="num" style="text-align:right">' + money(s.amount) + '</span><span></span></div>';
-  }).join('');
-
-  openModal('Assign from income plan',
-    '<p class="split-foot" style="border-radius:9px;margin-bottom:14px">' +
-      'Your plan splits <b class="num">' + money(r.totalAmount) + '</b> across ' + r.splits.length +
-      ' categories on day ' + r.dayOfMonth + '. Applying it sets those assignments for ' +
-      monthLabel(MONTH) + '.</p>' +
-    '<div class="splits" style="max-height:38vh;overflow-y:auto;margin-bottom:14px">' + lines + '</div>' +
-    '<label class="check"><input type="checkbox" id="planReplace"> Replace what is already assigned</label>' +
-    '<button class="btn" onclick="submitIncomePlan(\'' + r.id + '\')">Assign to ' +
-      monthLabel(MONTH) + '</button>');
-}
-
-function submitIncomePlan(id) {
-  call('applyIncomePlan', {
-    month: MONTH, recurringId: id,
-    replace: document.getElementById('planReplace').checked
-  }, 'Budget assigned');
 }
 
 // --- categories --------------------------------------------------------------
